@@ -1,13 +1,16 @@
 # Shared settings for the 3 branch containers. Each branch overrides only its own env.
 # Each branch's DB is its own MongoDB Atlas cluster; connection strings come from the root .env (see .env.example).
+  
 x-branch: &branch
+  deploy:
+    replicas: 2
   build: ./server
   # -L (polling): file events from a Windows/macOS bind mount don't reach the container otherwise.
   command: ["npx", "nodemon", "-L", "src/server.js"]
   volumes:
     - ./server/src:/app/src
   healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://localhost:3000/healthz"]
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
     interval: 10s
     timeout: 3s
     retries: 5
@@ -28,7 +31,8 @@ services:
     volumes:
       - ./gateway/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/gateway-health"]
+      # 127.0.0.1, not localhost: localhost resolves to IPv6 ::1 and nginx listens on IPv4 only.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/gateway-health"]
       interval: 10s
       timeout: 3s
       retries: 3

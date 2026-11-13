@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "seed": "node src/seeds/seedBranch.js",
     "check:db": "node src/config/checkConnections.js",
-    "test": "jest --runInBand --forceExit"
+    "test": "jest --runInBand --forceExit",
+    "test:lb": "jest --runInBand --testMatch \"**/tests/*.lb.js\""
   },
   "keywords": [],
   "author": "",

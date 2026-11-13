@@ -1,0 +1,49 @@
+// Loads and validates this branch's config. Fails fast at boot so a misconfigured branch never starts.
+const path = require('path');
+
+// Root .env for local runs. In Docker the file isn't there and compose supplies the vars instead.
+require('dotenv').config({ path: path.resolve(__dirname, '../../../.env'), quiet: true });
+
+const VALID_BRANCHES = ['ajax', 'oshawa', 'whitby'];
+
+// "ajax=http://branch-ajax:3000,whitby=http://branch-whitby:3000" -> { ajax: '...', whitby: '...' }
+function parsePeerUrls(raw = '', selfId) {
+  const peers = {};
+  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const [branch, url] = entry.split('=').map((s) => s && s.trim());
+    if (!VALID_BRANCHES.includes(branch) || !url) {
+      throw new Error(`Invalid PEER_URLS entry "${entry}". Expected <branch>=<url>, branch one of: ${VALID_BRANCHES.join(', ')}`);
+    }
+    if (branch !== selfId) peers[branch] = url;
+  }
+  return peers;
+}
+
+function loadEnv(env = process.env) {
+  const branchId = (env.BRANCH_ID || '').toLowerCase();
+  if (!VALID_BRANCHES.includes(branchId)) {
+    throw new Error(`Invalid or missing BRANCH_ID "${env.BRANCH_ID}". Must be one of: ${VALID_BRANCHES.join(', ')}`);
+  }
+
+  // Compose sets MONGO_URI; locally the root .env holds one URI per branch.
+  const mongoUri = env.MONGO_URI || env[`MONGO_URI_${branchId.toUpperCase()}`];
+  if (!mongoUri) throw new Error(`Missing MONGO_URI (or MONGO_URI_${branchId.toUpperCase()}) for branch "${branchId}"`);
+
+  const nodeEnv = env.NODE_ENV || 'development';
+  if (nodeEnv === 'production' && !env.JWT_SECRET) throw new Error('JWT_SECRET is required in production');
+
+  return {
+    nodeEnv,
+    branchId,
+    validBranches: VALID_BRANCHES,
+    port: Number(env.PORT) || 3000,
+    mongoUri,
+    peers: parsePeerUrls(env.PEER_URLS, branchId),
+    jwtSecret: env.JWT_SECRET || 'dev-secret-change-in-prod',
+    peerTimeoutMs: Number(env.PEER_TIMEOUT_MS) || 800,
+  };
+}
+
+module.exports = loadEnv();
+module.exports.loadEnv = loadEnv;
+module.exports.parsePeerUrls = parsePeerUrls;
