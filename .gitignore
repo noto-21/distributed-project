@@ -150,3 +150,37 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# React / Frontend Production Builds (covers client/build and client/dist)
+build/
+
+# Local MongoDB & Docker Volume Data (if bind-mounted in infra/docker)
+data/
+mongo-data/
+*.dump
+*.archive
+
+# Kubernetes / Kind Local Configs & Certs
+*kubeconfig*
+*.pem
+*.key
+
+# OS Generated Files (prevents macOS/Windows conflicts across the repo)
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# IDE & Editor Settings
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# Test Artifacts & Python Scripts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+test-results/
