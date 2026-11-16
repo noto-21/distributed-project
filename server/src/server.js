@@ -14,6 +14,8 @@ app.get('/healthz', (req, res) => {
   res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'db-unavailable', branchId: env.branchId, instance: os.hostname() });
 });
 
+app.use('/api/auth', require('./routes/auth'));
+
 // ---- Process boot ----
 async function start() {
   await mongoose.connect(env.mongoUri);   // this branch's cluster only

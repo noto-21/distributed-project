@@ -20,6 +20,8 @@ x-branch-env: &branch-env
   NODE_ENV: development
   PORT: 3000
   JWT_SECRET: dev-secret-change-in-prod
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
   PEER_TIMEOUT_MS: 800
 
 services:

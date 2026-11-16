@@ -40,6 +40,14 @@ function loadEnv(env = process.env) {
     mongoUri,
     peers: parsePeerUrls(env.PEER_URLS, branchId),
     jwtSecret: env.JWT_SECRET || 'dev-secret-change-in-prod',
+    jwtExpiresIn: env.JWT_EXPIRES_IN || '1h',
+    clientUrl: env.CLIENT_URL || 'http://localhost:5173',
+    // Optional: Google login returns 501 unless both are set.
+    google: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? {
+      clientId: env.GOOGLE_CLIENT_ID,
+      clientSecret: env.GOOGLE_CLIENT_SECRET,
+      redirectUri: env.GOOGLE_REDIRECT_URI || `http://localhost:8080/${branchId}/api/auth/google/callback`,
+    } : null,
     peerTimeoutMs: Number(env.PEER_TIMEOUT_MS) || 800,
   };
 }
