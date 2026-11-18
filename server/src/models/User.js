@@ -8,6 +8,7 @@ const userSchema = new mongoose.Schema({
   googleId: { type: String, unique: true, sparse: true },
   role: { type: String, enum: ['patron', 'librarian'], default: 'patron' },
   homeBranch: { type: String, enum: validBranches, required: true },
+  book: { type: String, trim: true, default: ""},
 }, {
   timestamps: true,
   toJSON: { transform: (doc, ret) => { delete ret.passwordHash; return ret; } },
