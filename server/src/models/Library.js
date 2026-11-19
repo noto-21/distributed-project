@@ -20,6 +20,7 @@ const librarySchema = new mongoose.Schema(
       default: "AVAILABLE",
     },
     activeTransferId: { type: String, default: null },
+    borrowedBy: { type: String, default: null }, // userId from the JWT while status is BORROWED
   },
   {
     timestamps: true,

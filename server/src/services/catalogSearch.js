@@ -37,12 +37,15 @@ async function findBook(isbn10) {
   const results = await Promise.allSettled(peers.map((peer) => askPeer(peer, isbn10)));
 
   const foundAt = [];
-  const offline = [];
+  // Peers the heartbeat already marked down are reported without spending a timeout on them.
+  const offline = [...discoveryService.peers.values()].filter((p) => !p.healthy).map((p) => p.branch);
   results.forEach((r, i) => {
     if (r.status === "rejected") offline.push(peers[i].branch); // timeout or error: degrade, don't fail the search
     else if (r.value.found) foundAt.push(r.value);
   });
-  return { isbn10, source: "peers", foundAt, offline };
+  const result = { isbn10, source: "peers", foundAt, offline };
+  if (offline.length) result.warning = `Branch(es) unreachable: ${offline.join(", ")}. Results may be incomplete.`;
+  return result;
 }
 
 module.exports = { findBook };
