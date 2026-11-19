@@ -108,11 +108,14 @@ describe("search with a peer down", () => {
 
   test("local DB failure surfaces as a JSON 500 without leaking internals", async () => {
     Library.findOne.mockRejectedValue(new Error("connection pool exploded at 10.0.0.5"));
+    const log = jest.spyOn(console, "error").mockImplementation(() => {}); // expected: handler logs real 500s
 
     const res = await request(app).get(`/api/circulation/books/${BOOK.isbn10}`);
 
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Internal server error", code: "INTERNAL_ERROR" });
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({ message: "connection pool exploded at 10.0.0.5" }));
+    log.mockRestore();
   });
 });
 
