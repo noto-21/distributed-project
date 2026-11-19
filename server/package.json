@@ -10,7 +10,8 @@
     "check:db": "node src/config/checkConnections.js",
     "test": "jest --runInBand --forceExit",
     "test:lb": "jest --runInBand --testMatch \"**/tests/*.lb.js\"",
-    "test:trans": "jest --runInBand --testMatch \"**/tests/*.saga.js\""
+    "test:trans": "jest --runInBand --testMatch \"**/tests/*.saga.js\"",
+    "test:db": "jest --runInBand --testMatch \"**/tests/*.db.js\""
   },
   "keywords": [],
   "author": "",
