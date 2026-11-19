@@ -22,7 +22,7 @@ describe("transferSaga Integration Tests", () => {
   let receivedPayloads = [];
 
   before(async () => {
-    await mongoose.connect(process.env.TEST_MONGO_URI || env.mongoUri);
+    await mongoose.connect(env.mongoUri);
 
     // Spin up a real local HTTP server acting as the "ajax" peer branch
     mockPeerServer = http.createServer((req, res) => {
