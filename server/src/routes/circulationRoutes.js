@@ -9,5 +9,6 @@ const router = express.Router();
 //router.post("/transfers", requireAuth, circulationController.transferBook);
 router.post("/transfers", circulationController.transferBook);
 router.get("/books/:isbn10", circulationController.findBook);
+router.post("/checkout", requireAuth, circulationController.checkout);
 
 module.exports = router;

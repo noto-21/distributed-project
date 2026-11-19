@@ -3,6 +3,7 @@ const os = require("os");
 const express = require("express");
 const mongoose = require("mongoose");
 const env = require("./config/env"); // validates BRANCH_ID, PORT, MONGO_URI, PEER_URLS
+const discoveryService = require("./services/discoveryService");
 
 // ---- Express app (routes/middleware go here) ----
 const app = express();
@@ -27,10 +28,19 @@ app.use("/api/circulation", require("./routes/circulationRoutes"));
 // Peer-only internal routes (blocked at NGINX, protected by INTERNAL_API_SECRET)
 app.use("/internal", require("./routes/internalRoutes"));
 
+// JSON errors. AppErrors carry their own status/code; anything else is a 500 that never leaks its message.
+app.use((err, req, res, next) => {
+  if (!err.isOperational) console.error(err);
+  res.status(err.isOperational ? err.statusCode : 500).json(err.isOperational
+    ? { error: err.message, code: err.errorCode }
+    : { error: "Internal server error", code: "INTERNAL_ERROR" });
+});
+
 // ---- Process boot ----
 async function start() {
   await mongoose.connect(env.mongoUri); // this branch's cluster only
   console.log(`[${env.branchId}] connected to MongoDB`);
+  discoveryService.start(); // heartbeats mark dead peers unhealthy so searches skip them
 
   const server = app.listen(env.port, () =>
     console.log(`[${env.branchId}] listening on ${env.port}`),
@@ -38,6 +48,7 @@ async function start() {
 
   const shutdown = (signal) => {
     console.log(`[${env.branchId}] ${signal} received, shutting down`);
+    discoveryService.stop();
     server.close(async () => {
       // stop accepting, let in-flight requests finish
       await mongoose.connection.close();
