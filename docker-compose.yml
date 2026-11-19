@@ -1,6 +1,6 @@
 # Shared settings for the 3 branch containers. Each branch overrides only its own env.
 # Each branch's DB is its own MongoDB Atlas cluster; connection strings come from the root .env (see .env.example).
-  
+
 x-branch: &branch
   deploy:
     replicas: 2
@@ -22,7 +22,9 @@ x-branch-env: &branch-env
   JWT_SECRET: dev-secret-change-in-prod
   GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
   GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-  PEER_TIMEOUT_MS: 800
+  PEER_TIMEOUT_MS: 3000
+  DISCOVERY_INTERVAL_MS: 5000
+  INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
 
 services:
   # --- L7 Load Balancer & Edge Gateway ---

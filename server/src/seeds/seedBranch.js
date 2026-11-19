@@ -39,6 +39,8 @@ const importCsv = async (filePath) => {
           num_pages: Number(row.num_pages),
           ratings_count: Number(row.ratings_count),
           currentBranch: env.branchId, // Whatever branch we're currently on (might be redundant)
+          status: "AVAILABLE",
+          activeTransferId: null,
         });
       })
       .on("end", async () => {

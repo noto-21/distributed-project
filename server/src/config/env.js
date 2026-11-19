@@ -1,18 +1,23 @@
 // Loads and validates this branch's config. Fails fast at boot so a misconfigured branch never starts.
-const path = require('path');
+const path = require("path");
 
 // Root .env for local runs. In Docker the file isn't there and compose supplies the vars instead.
-require('dotenv').config({ path: path.resolve(__dirname, '../../../.env'), quiet: true });
+require("dotenv").config({ path: path.resolve(__dirname, "../../../.env"), quiet: true });
 
-const VALID_BRANCHES = ['ajax', 'oshawa', 'whitby'];
+const VALID_BRANCHES = ["ajax", "oshawa", "whitby"];
 
 // "ajax=http://branch-ajax:3000,whitby=http://branch-whitby:3000" -> { ajax: '...', whitby: '...' }
-function parsePeerUrls(raw = '', selfId) {
+function parsePeerUrls(raw = "", selfId) {
   const peers = {};
-  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
-    const [branch, url] = entry.split('=').map((s) => s && s.trim());
+  for (const entry of raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)) {
+    const [branch, url] = entry.split("=").map((s) => s && s.trim());
     if (!VALID_BRANCHES.includes(branch) || !url) {
-      throw new Error(`Invalid PEER_URLS entry "${entry}". Expected <branch>=<url>, branch one of: ${VALID_BRANCHES.join(', ')}`);
+      throw new Error(
+        `Invalid PEER_URLS entry "${entry}". Expected <branch>=<url>, branch one of: ${VALID_BRANCHES.join(", ")}`,
+      );
     }
     if (branch !== selfId) peers[branch] = url;
   }
@@ -20,17 +25,23 @@ function parsePeerUrls(raw = '', selfId) {
 }
 
 function loadEnv(env = process.env) {
-  const branchId = (env.BRANCH_ID || '').toLowerCase();
+  const branchId = (env.BRANCH_ID || "").toLowerCase();
   if (!VALID_BRANCHES.includes(branchId)) {
-    throw new Error(`Invalid or missing BRANCH_ID "${env.BRANCH_ID}". Must be one of: ${VALID_BRANCHES.join(', ')}`);
+    throw new Error(
+      `Invalid or missing BRANCH_ID "${env.BRANCH_ID}". Must be one of: ${VALID_BRANCHES.join(", ")}`,
+    );
   }
 
   // Compose sets MONGO_URI; locally the root .env holds one URI per branch.
   const mongoUri = env.MONGO_URI || env[`MONGO_URI_${branchId.toUpperCase()}`];
-  if (!mongoUri) throw new Error(`Missing MONGO_URI (or MONGO_URI_${branchId.toUpperCase()}) for branch "${branchId}"`);
+  if (!mongoUri)
+    throw new Error(
+      `Missing MONGO_URI (or MONGO_URI_${branchId.toUpperCase()}) for branch "${branchId}"`,
+    );
 
-  const nodeEnv = env.NODE_ENV || 'development';
-  if (nodeEnv === 'production' && !env.JWT_SECRET) throw new Error('JWT_SECRET is required in production');
+  const nodeEnv = env.NODE_ENV || "development";
+  if (nodeEnv === "production" && !env.JWT_SECRET)
+    throw new Error("JWT_SECRET is required in production");
 
   return {
     nodeEnv,
@@ -39,16 +50,24 @@ function loadEnv(env = process.env) {
     port: Number(env.PORT) || 3000,
     mongoUri,
     peers: parsePeerUrls(env.PEER_URLS, branchId),
-    jwtSecret: env.JWT_SECRET || 'dev-secret-change-in-prod',
-    jwtExpiresIn: env.JWT_EXPIRES_IN || '1h',
-    clientUrl: env.CLIENT_URL || 'http://localhost:5173',
+    jwtSecret: env.JWT_SECRET || "dev-secret-change-in-prod",
+    jwtExpiresIn: env.JWT_EXPIRES_IN || "1h",
+    clientUrl: env.CLIENT_URL || "http://localhost:5173",
     // Optional: Google login returns 501 unless both are set.
-    google: env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET ? {
-      clientId: env.GOOGLE_CLIENT_ID,
-      clientSecret: env.GOOGLE_CLIENT_SECRET,
-      redirectUri: env.GOOGLE_REDIRECT_URI || `http://localhost:8080/${branchId}/api/auth/google/callback`,
-    } : null,
-    peerTimeoutMs: Number(env.PEER_TIMEOUT_MS) || 800,
+    google:
+      env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
+        ? {
+            clientId: env.GOOGLE_CLIENT_ID,
+            clientSecret: env.GOOGLE_CLIENT_SECRET,
+            redirectUri:
+              env.GOOGLE_REDIRECT_URI ||
+              `http://localhost:8080/${branchId}/api/auth/google/callback`,
+          }
+        : null,
+    peerTimeoutMs: Number(env.PEER_TIMEOUT_MS) || 3000,
+    discoveryIntervalMs: Number(env.DISCOVERY_INTERVAL_MS) || 5000,
+
+    internalSecret: env.INTERNAL_API_SECRET || "dev-internal-secret-change-in-prod",
   };
 }
 
