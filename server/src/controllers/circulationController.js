@@ -1,6 +1,7 @@
 // Handles HTTP requests to send book from one library to another
 // Library-to-Library / Server-to-Server
 const transferSaga = require("../services/transferSaga");
+const catalogSearch = require("../services/catalogSearch");
 const AppError = require("../utils/AppError");
 
 exports.transferBook = async (req, res, next) => {
@@ -18,6 +19,16 @@ exports.transferBook = async (req, res, next) => {
       message: "Book transferred successfully",
       transfer: result,
     });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/circulation/books/:isbn10 — local first, then asks every peer branch
+exports.findBook = async (req, res, next) => {
+  try {
+    const result = await catalogSearch.findBook(req.params.isbn10);
+    res.status(result.foundAt.length ? 200 : 404).json(result);
   } catch (err) {
     next(err);
   }

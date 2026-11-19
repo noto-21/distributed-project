@@ -113,7 +113,7 @@ docker compose up --build
 
 This starts:
 
-* **NGINX Gateway:** `http://localhost:8080`
+* **NGINX Gateway:** `http://localhost:8090`
 * **Branch Servers:** `branch-ajax`, `branch-oshawa`, `branch-whitby` (with live hot-reloading on `server/src/`)
 * **Isolated Databases:** `mongo-ajax`, `mongo-oshawa`, `mongo-whitby`
 
@@ -122,7 +122,7 @@ This starts:
 Check the health endpoints for all three branches:
 
 ```bash
-curl http://localhost:8080/healthz
+curl http://localhost:8090/healthz
 ```
 
 ### 4. Run Concurrency & Failover Tests

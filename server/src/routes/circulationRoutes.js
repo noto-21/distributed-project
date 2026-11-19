@@ -8,5 +8,6 @@ const router = express.Router();
 // Remove requireAuth temporarily if you wanna test curl without a JWT token first
 //router.post("/transfers", requireAuth, circulationController.transferBook);
 router.post("/transfers", circulationController.transferBook);
+router.get("/books/:isbn10", circulationController.findBook);
 
 module.exports = router;

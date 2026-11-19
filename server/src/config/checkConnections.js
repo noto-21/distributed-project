@@ -2,7 +2,6 @@
 const path = require('path');
 const mongoose = require('mongoose');
 
-// Earlier files win; never overrides vars already set in the shell.
 require('dotenv').config({
   path: [path.resolve(__dirname, '../../.env'), path.resolve(__dirname, '../../../.env')],
   quiet: true,

@@ -79,7 +79,7 @@ describe('Google OAuth', () => {
     expect(res.status).toBe(302);
     const url = new URL(res.headers.location);
     expect(url.host).toBe('accounts.google.com');
-    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:8080/ajax/api/auth/google/callback');
+    expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:8090/ajax/api/auth/google/callback');
     expect(res.headers['set-cookie'][0]).toContain(`oauth_state=${url.searchParams.get('state')}`);
   });
 

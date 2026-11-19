@@ -3,7 +3,7 @@
 const { execSync } = require('child_process');
 const path = require('path');
 
-const GATEWAY = process.env.GATEWAY_URL || 'http://localhost:8080';
+const GATEWAY = process.env.GATEWAY_URL || 'http://localhost:8090';
 const ROOT = path.resolve(__dirname, '../..');   // where docker-compose.yml lives
 const BRANCHES = ['ajax', 'oshawa', 'whitby'];
 

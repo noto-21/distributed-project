@@ -28,4 +28,7 @@ router.get("/health", (req, res) => {
 // Used by transferSaga to receive a transferred Library row
 router.post("/transfers/receive", internalController.receiveTransfer);
 
+// Used by catalogSearch when a peer has a local miss
+router.get("/books/:isbn10", internalController.lookupBook);
+
 module.exports = router;

@@ -46,3 +46,20 @@ exports.receiveTransfer = async (req, res, next) => {
     next(err);
   }
 };
+
+// Peer asks "do you have this book?": 200 with the book if available here, 404 otherwise.
+exports.lookupBook = async (req, res, next) => {
+  try {
+    lamportClock.sync(req.headers["x-lamport-timestamp"]); // receive event
+    const book = await Library.findOne({
+      isbn10: req.params.isbn10,
+      currentBranch: discoveryService.selfBranch,
+      status: "AVAILABLE",
+    });
+    res.set("x-lamport-timestamp", String(lamportClock.tick())); // send event
+    if (!book) return res.status(404).json({ found: false, branch: discoveryService.selfBranch });
+    res.status(200).json({ found: true, branch: discoveryService.selfBranch, book });
+  } catch (err) {
+    next(err);
+  }
+};

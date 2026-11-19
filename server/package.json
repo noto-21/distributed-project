@@ -9,7 +9,8 @@
     "seed": "node src/seeds/seedBranch.js",
     "check:db": "node src/config/checkConnections.js",
     "test": "jest --runInBand --forceExit",
-    "test:lb": "jest --runInBand --testMatch \"**/tests/*.lb.js\""
+    "test:lb": "jest --runInBand --testMatch \"**/tests/*.lb.js\"",
+    "test:trans": "jest --runInBand --testMatch \"**/tests/*.saga.js\""
   },
   "keywords": [],
   "author": "",
