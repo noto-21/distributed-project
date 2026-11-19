@@ -1,12 +1,20 @@
 // distributed Saga pattern to safely transfer a book record from one library branch database to another over HTTP
 // uses Lamport timestamps to track event ordering across nodes
-const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
 const Library = require("../models/Library");
 const TransferLog = require("../models/TransferLog");
 const lamportClock = require("../utils/lamportClock");
 const discoveryService = require("./discoveryService");
 const config = require("../config/env");
 const AppError = require("../utils/AppError");
+
+function generateUuidV4() {
+  const bytes = crypto.randomBytes(16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // Set version to 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // Set variant to RFC 4122
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 async function callPeerBranch(targetBranch, path, payload, tick) {
   const baseUrl = discoveryService.getPeerUrl(targetBranch);
@@ -60,7 +68,7 @@ async function executeTransfer({ isbn10, targetBranch }) {
   // Fail fast if targetBranch is self, unknown, or marked offline
   discoveryService.getPeerUrl(normalizedTarget);
 
-  const sagaId = uuidv4();
+  const sagaId = generateUuidV4();
   const initialTick = lamportClock.tick();
 
   // Step 1 (Local Atomic Lock): Lock row on source DB across both container replicas

@@ -1,4 +1,3 @@
-const { describe, it, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const mongoose = require("mongoose");
@@ -21,7 +20,7 @@ describe("transferSaga Integration Tests", () => {
   let peerBehavior = "SUCCESS"; // "SUCCESS" | "FAIL_500" | "TIMEOUT"
   let receivedPayloads = [];
 
-  before(async () => {
+  beforeAll(async () => {
     await mongoose.connect(env.mongoUri);
 
     // Spin up a real local HTTP server acting as the "ajax" peer branch
@@ -71,7 +70,7 @@ describe("transferSaga Integration Tests", () => {
     });
   });
 
-  after(async () => {
+  afterAll(async () => {
     discoveryService.stop();
     await Library.deleteMany({ isbn10: /^TEST-/ });
     await TransferLog.deleteMany({ bookIsbn: /^TEST-/ });
