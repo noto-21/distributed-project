@@ -28,7 +28,10 @@ const makeBook = (isbn10, over = {}) =>
 let peer;
 
 beforeAll(async () => {
-  await mongoose.connect(env.mongoUri);
+  // runtimeAdapters: driver 7.9 loads `os` via dynamic import(), which Jest's VM can't do; without it the
+  // handshake goes out empty and mongo:7/8.3 reject it ("Missing required sub-document 'driver'").
+  // serverSelectionTimeoutMS: fail in 5s with the real reason instead of hitting the 30s hook timeout.
+  await mongoose.connect(env.mongoUri, { serverSelectionTimeoutMS: 5000, runtimeAdapters: { os: require("node:os") } });
   // Fake "ajax" peer that accepts every transfer, so the transfer saga can actually commit.
   peer = http.createServer((req, res) => {
     req.resume();
