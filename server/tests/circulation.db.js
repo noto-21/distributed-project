@@ -17,6 +17,7 @@ const Loan = require("../src/models/Loan");
 const discoveryService = require("../src/services/discoveryService");
 const recoveryService = require("../src/services/recoveryService");
 const lamportClock = require("../src/utils/lamportClock");
+const maintenance = require("../src/services/maintenance");
 const { signToken } = require("../src/middlewares/auth");
 
 jest.setTimeout(30000);
@@ -61,6 +62,7 @@ async function whitbyDelivers(body, { isbn10, title }) {
     body: JSON.stringify({
       sagaId: `saga-${isbn10}`,
       sourceBranch: "whitby",
+      holdFor: body.holdFor, // exactly what the real saga forwards
       bookData: { isbn10, title, originBranch: "whitby", custodyHistory: [] },
     }),
   });
@@ -102,9 +104,11 @@ describe("patron requests a book to their home branch", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: "TRANSFERRED", from: "whitby", to: "oshawa" });
-    expect(fake.whitby.seen.find((r) => r.url === "/internal/transfers/send").body).toEqual({ isbn10: book.isbn10, targetBranch: "oshawa" });
+    expect(fake.whitby.seen.find((r) => r.url === "/internal/transfers/send").body).toEqual({ isbn10: book.isbn10, targetBranch: "oshawa", holdFor: "pat-1" });
     const here = await Library.findOne({ isbn10: book.isbn10 }).lean();
-    expect(here).toMatchObject({ currentBranch: "oshawa", status: "AVAILABLE", originBranch: "whitby" });
+    // It arrives reserved for the patron who asked, for HOLD_DAYS.
+    expect(here).toMatchObject({ currentBranch: "oshawa", status: "ON_HOLD", heldFor: "pat-1", originBranch: "whitby" });
+    expect(new Date(res.body.holdExpiresAt).getTime()).toBeGreaterThan(Date.now() + 2 * 86_400_000);
     expect(here.custodyHistory).toEqual([expect.objectContaining({ event: "TRANSFER_IN", branch: "oshawa", from: "whitby" })]);
     expect(here.custodyHistory[0].lamport).toBeGreaterThan(500); // receive event after whitby's 500
   });
@@ -120,11 +124,12 @@ describe("patron requests a book to their home branch", () => {
     expect(res.body.from).toBe("whitby");
   });
 
-  test("already on the shelf at home -> no transfer", async () => {
+  test("already on the shelf at home -> held here for the patron, no transfer", async () => {
     await makeBook("TEST-CR-003");
     const res = await ask("TEST-CR-003");
-    expect(res.body.status).toBe("AVAILABLE_HERE");
+    expect(res.body.status).toBe("ON_HOLD");
     expect(fake.whitby.seen).toHaveLength(0);
+    expect((await ask("TEST-CR-003")).body.status).toBe("ON_HOLD"); // asking again is harmless
   });
 
   test("nobody has it / the only holder is down -> 404 with a warning naming the down branch", async () => {
@@ -159,6 +164,47 @@ describe("checkout, return, loans and custody history", () => {
     const loans = (await request(app).get("/api/circulation/loans/me").set("Authorization", patron())).body.loans;
     expect(loans).toEqual([expect.objectContaining({ isbn10: "TEST-CR-010", status: "RETURNED" })]);
     expect(loans[0].returnLamport).toBeGreaterThan(loans[0].checkoutLamport);
+  });
+
+  test("a held copy can only be checked out by the patron it is held for", async () => {
+    await makeBook("TEST-CR-050", { status: "ON_HOLD", heldFor: "alice", holdExpiresAt: new Date(Date.now() + 86_400_000) });
+    const bob = await post("checkout", "TEST-CR-050", patron("oshawa", "bob"));
+    expect(bob.status).toBe(409);
+    const alice = await post("checkout", "TEST-CR-050", patron("oshawa", "alice"));
+    expect(alice.status).toBe(200);
+    expect(alice.body.book).toMatchObject({ status: "BORROWED", heldFor: null, holdExpiresAt: null });
+  });
+
+  test("held copies don't show up in search for other patrons, and appear in the holder's /holds/me", async () => {
+    await makeBook("TEST-CR-051", { status: "ON_HOLD", heldFor: "pat-1", holdExpiresAt: new Date(Date.now() + 86_400_000) });
+    expect((await request(app).get("/api/circulation/books/TEST-CR-051")).body.source).toBe("peers"); // not offered locally
+    const holds = (await request(app).get("/api/circulation/holds/me").set("Authorization", patron())).body.holds;
+    expect(holds.map((h) => h.isbn10)).toEqual(["TEST-CR-051"]);
+  });
+
+  test("an expired hold goes back on the shelf (maintenance job)", async () => {
+    await makeBook("TEST-CR-052", { status: "ON_HOLD", heldFor: "slowpoke", holdExpiresAt: new Date(Date.now() - 1000) });
+    await makeBook("TEST-CR-053", { status: "ON_HOLD", heldFor: "punctual", holdExpiresAt: new Date(Date.now() + 86_400_000) });
+    const report = await maintenance.releaseExpiredHolds();
+    expect(report.released).toBeGreaterThanOrEqual(1);
+    expect((await Library.findOne({ isbn10: "TEST-CR-052" })).toObject()).toMatchObject({ status: "AVAILABLE", heldFor: null });
+    expect((await Library.findOne({ isbn10: "TEST-CR-053" })).status).toBe("ON_HOLD");
+  });
+
+  test("loans get a due date; overdue loans are flagged, listed for librarians, and a late return says so", async () => {
+    await makeBook("TEST-CR-060");
+    const co = await post("checkout", "TEST-CR-060");
+    const due = new Date(co.body.loan.dueAt).getTime();
+    expect(due).toBeGreaterThan(Date.now() + 13 * 86_400_000); // LOAN_DAYS = 14
+
+    await Loan.updateOne({ isbn10: "TEST-CR-060" }, { $set: { dueAt: new Date(Date.now() - 86_400_000) } }); // a day late
+    const mine = (await request(app).get("/api/circulation/loans/me").set("Authorization", patron())).body.loans;
+    expect(mine.find((l) => l.isbn10 === "TEST-CR-060").overdue).toBe(true);
+    expect((await request(app).get("/api/circulation/loans/overdue").set("Authorization", patron())).status).toBe(403);
+    const overdue = (await request(app).get("/api/circulation/loans/overdue").set("Authorization", librarian)).body.loans;
+    expect(overdue.map((l) => l.isbn10)).toContain("TEST-CR-060");
+
+    expect((await post("return", "TEST-CR-060")).body.late).toBe(true);
   });
 
   test("custody stays in Lamport order even when the next event hits a replica whose clock is behind", async () => {

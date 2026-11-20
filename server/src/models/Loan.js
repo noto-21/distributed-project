@@ -9,6 +9,7 @@ const loanSchema = new mongoose.Schema(
     branch: { type: String, enum: validBranches, required: true },
     status: { type: String, enum: ["ACTIVE", "RETURNED"], default: "ACTIVE" },
     checkoutLamport: { type: Number, required: true },
+    dueAt: { type: Date, required: true }, // wall clock is fine: due dates are local to this branch
     returnLamport: Number,
   },
   { timestamps: true },

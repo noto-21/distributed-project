@@ -6,12 +6,14 @@ const AppError = require("../utils/AppError");
 const { signToken } = require("../middlewares/auth");
 const { callPeer, callAllPeers } = require("../services/peerClient");
 const userService = require("../services/userService");
+const tokenService = require("../services/tokenService");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STATE_COOKIE = "oauth_state";
 
-// homeBranch in the response tells the client which /<branch>/ prefix to use from now on.
-const authResponse = (user) => ({ token: signToken(user), user, homeBranch: user.homeBranch });
+// Sign-in responses: { token, refreshToken, user, homeBranch }. homeBranch tells the client which /<branch>/
+// prefix to use from now on. The home branch mints the refresh token, since that's where it is stored.
+const remoteSession = (body) => ({ token: signToken(body.user), refreshToken: body.refreshToken, user: body.user, homeBranch: body.user.homeBranch });
 
 // POST /api/auth/register { email, password, name, homeBranch }
 // Any branch can take the request; the account is created in the chosen home branch's DB.
@@ -28,12 +30,12 @@ async function register(req, res, next) {
     const passwordHash = await bcrypt.hash(password, 10);
     if (homeBranch === env.branchId) {
       const user = await userService.createHere({ email, name, passwordHash });
-      return res.status(201).json(authResponse(user));
+      return res.status(201).json(await tokenService.sessionFor(user));
     }
 
     const { status, body } = await callPeer(homeBranch, "POST", "/users", { email, name, passwordHash });
     if (status !== 201) return res.status(status).json(body);
-    res.status(201).json(authResponse(body.user));
+    res.status(201).json(remoteSession(body));
   } catch (err) {
     if (err.errorCode === "PEER_OFFLINE" || err.errorCode === "PEER_UNAVAILABLE") {
       return next(AppError.serviceUnavailable(`Home branch '${req.body.homeBranch}' is offline, try again shortly`, "HOME_BRANCH_OFFLINE"));
@@ -50,15 +52,34 @@ async function login(req, res, next) {
     if (typeof email !== "string" || typeof password !== "string") throw AppError.badRequest("Email and password required");
 
     const local = await userService.verifyHere(email, password);
-    let user = local.user;
+    if (local.user) return res.json(await tokenService.sessionFor(local.user));
     if (!local.exists) {
       // Plain password goes to peers only over the internal network, guarded by INTERNAL_API_SECRET.
       const answers = await callAllPeers("POST", "/users/verify", { email, password });
-      user = answers.find((a) => a.status === 200)?.body.user ?? null;
+      const home = answers.find((a) => a.status === 200);
+      if (home) return res.json(remoteSession(home.body));
     }
     // Same message for unknown email, Google-only account and wrong password.
-    if (!user) return res.status(401).json({ error: "Invalid email or password", code: "INVALID_CREDENTIALS" });
-    res.json(authResponse(user));
+    res.status(401).json({ error: "Invalid email or password", code: "INVALID_CREDENTIALS" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/auth/refresh { refreshToken }: new access token + rotated refresh token, at any branch.
+async function refresh(req, res, next) {
+  try {
+    res.json(await tokenService.refresh(req.body?.refreshToken));
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/auth/logout { refreshToken }: revoke it. Idempotent; the current access token expires on its own.
+async function logout(req, res, next) {
+  try {
+    await tokenService.logout(req.body?.refreshToken);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
@@ -163,7 +184,8 @@ async function googleCallback(req, res) {
   }
 
   // Fragment, not query string: never sent to servers or logged by NGINX.
-  res.redirect(`${env.clientUrl}/auth/callback#token=${signToken(user)}`);
+  const session = await tokenService.sessionFor(user);
+  res.redirect(`${env.clientUrl}/auth/callback#token=${session.token}&refreshToken=${encodeURIComponent(session.refreshToken)}`);
 }
 
-module.exports = { register, login, me, googleStart, googleCallback };
+module.exports = { register, login, refresh, logout, me, googleStart, googleCallback };

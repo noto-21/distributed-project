@@ -10,6 +10,8 @@ router.post("/requests", requireAuth, circulationController.requestTransfer); //
 router.post("/checkout", requireAuth, circulationController.checkout);
 router.post("/return", requireAuth, circulationController.returnBook);
 router.get("/loans/me", requireAuth, circulationController.myLoans);
+router.get("/holds/me", requireAuth, circulationController.myHolds);
+router.get("/loans/overdue", requireAuth, requireRole("librarian"), circulationController.overdueLoans);
 router.post("/transfers", requireAuth, requireRole("librarian"), circulationController.transferBook); // librarian push
 
 module.exports = router;

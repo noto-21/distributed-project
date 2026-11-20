@@ -6,6 +6,8 @@ process.env.INTERNAL_API_SECRET = "test-internal-secret";
 process.env.PEER_TIMEOUT_MS = "300";
 
 jest.mock("../src/models/User", () => ({ create: jest.fn(), findOne: jest.fn(), findById: jest.fn(), exists: jest.fn() }));
+jest.mock("../src/models/RefreshToken", () => ({ create: jest.fn(async () => ({})), findOneAndUpdate: jest.fn(), findOne: jest.fn(), updateOne: jest.fn(), updateMany: jest.fn() }));
+
 
 const http = require("node:http");
 const request = require("supertest");
@@ -30,10 +32,10 @@ beforeAll(async () => {
       seen.push({ method: req.method, url: req.url, body, headers: req.headers });
       const send = (status, json) => { res.writeHead(status, { "Content-Type": "application/json", "x-lamport-timestamp": "40" }); res.end(JSON.stringify(json)); };
       if (req.url.startsWith("/internal/users/exists")) return send(200, { exists: req.url.includes(encodeURIComponent("amy@ajax.ca")) });
-      if (req.url === "/internal/users" && req.method === "POST") return send(201, { user: { _id: "a2", email: body.email, role: "patron", homeBranch: "ajax" } });
+      if (req.url === "/internal/users" && req.method === "POST") return send(201, { user: { _id: "a2", email: body.email, role: "patron", homeBranch: "ajax" }, refreshToken: "ajax.rt-new" });
       if (req.url === "/internal/users/verify") {
         if (body.email !== "amy@ajax.ca") return send(404, { found: false });
-        return body.password === "password123" ? send(200, { user: AJAX_USER }) : send(401, { code: "INVALID_CREDENTIALS" });
+        return body.password === "password123" ? send(200, { user: AJAX_USER, refreshToken: "ajax.rt-login" }) : send(401, { code: "INVALID_CREDENTIALS" });
       }
       if (req.url === "/internal/users/a1") return send(200, { user: AJAX_USER });
       send(404, {});
@@ -48,6 +50,7 @@ afterAll(() => new Promise((r) => { ajax.server.closeAllConnections(); ajax.serv
 beforeEach(() => {
   seen = [];
   jest.resetAllMocks();
+  require("../src/models/RefreshToken").create.mockResolvedValue({});
   User.exists.mockResolvedValue(null);
   User.findOne.mockResolvedValue(null); // nobody is registered at oshawa
   discoveryService.peers.clear();
@@ -78,6 +81,7 @@ describe("signup picks the home branch", () => {
     expect(await bcrypt.compare("password123", forwarded.body.passwordHash)).toBe(true);
     expect(jwt.verify(res.body.token, env.jwtSecret)).toMatchObject({ userId: "a2", homeBranch: "ajax" });
     expect(res.body.homeBranch).toBe("ajax"); // client switches to /ajax/ from here on
+    expect(res.body.refreshToken).toBe("ajax.rt-new"); // minted and stored by the home branch
   });
 
   test("an email already registered at another branch is refused", async () => {
@@ -145,7 +149,7 @@ describe("internal user endpoints (this branch answering a peer)", () => {
   test("exists and get", async () => {
     User.exists.mockResolvedValue({ _id: "o1" });
     expect((await internal("get", "/users/exists?email=O@osh.ca")).body).toEqual({ exists: true });
-    expect(User.exists).toHaveBeenCalledWith({ email: "o@osh.ca" });
+    expect(User.exists).toHaveBeenCalledWith({ email: "o@osh.ca", duplicateOf: null }); // flagged duplicates don't count
     User.findById.mockResolvedValue(null);
     expect((await internal("get", "/users/nope")).status).toBe(404);
   });
