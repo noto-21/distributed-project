@@ -29,12 +29,18 @@ app.use("/api/circulation", require("./routes/circulationRoutes"));
 // Peer-only internal routes (blocked at NGINX, protected by INTERNAL_API_SECRET)
 app.use("/internal", require("./routes/internalRoutes"));
 
-// JSON errors. AppErrors carry their own status/code; anything else is a 500 that never leaks its message.
+// JSON errors. AppErrors carry their own status/code; client errors from Express itself (malformed JSON,
+// oversized body) are 4xx with expose=true; anything else is a 500 that never leaks its message.
 app.use((err, req, res, next) => {
-  if (!err.isOperational) console.error(err);
-  res.status(err.isOperational ? err.statusCode : 500).json(err.isOperational
-    ? { error: err.message, code: err.errorCode, ...(err.details && { details: err.details }) }
-    : { error: "Internal server error", code: "INTERNAL_ERROR" });
+  if (err.isOperational) {
+    return res.status(err.statusCode).json({ error: err.message, code: err.errorCode, ...(err.details && { details: err.details }) });
+  }
+  if (err.expose && err.status >= 400 && err.status < 500) {
+    const code = err.type === "entity.parse.failed" ? "INVALID_JSON" : "BAD_REQUEST";
+    return res.status(err.status).json({ error: code === "INVALID_JSON" ? "Request body is not valid JSON" : err.message, code });
+  }
+  console.error(err);
+  res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" });
 });
 
 // ---- Process boot ----
