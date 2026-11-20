@@ -123,6 +123,7 @@ async function executeTransfer({ isbn10, targetBranch }) {
         bookData: {
           ...bookData,
           currentBranch: normalizedTarget,
+          originBranch: bookData.originBranch || sourceBranch, // copies seeded before originBranch existed
           status: "AVAILABLE",
         },
       },

@@ -21,6 +21,22 @@ const librarySchema = new mongoose.Schema(
     },
     activeTransferId: { type: String, default: null },
     borrowedBy: { type: String, default: null }, // userId from the JWT while status is BORROWED
+    // Branch that owns this copy: a return anywhere else routes it back here. Travels with the copy on transfer.
+    originBranch: { type: String, enum: validBranches },
+    // Every hand-off of this copy, ordered by Lamport time (wall clocks differ between branches).
+    custodyHistory: {
+      type: [
+        {
+          _id: false,
+          event: { type: String, enum: ["CHECKOUT", "RETURN", "TRANSFER_IN"], required: true },
+          branch: { type: String, enum: validBranches, required: true },
+          lamport: { type: Number, required: true },
+          userId: String,
+          from: { type: String, enum: validBranches },
+        },
+      ],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -32,5 +48,10 @@ const librarySchema = new mongoose.Schema(
     },
   },
 );
+
+// A copy first saved at a branch belongs to that branch.
+librarySchema.pre("validate", function setOrigin() {
+  if (!this.originBranch) this.originBranch = this.currentBranch;
+});
 
 module.exports = mongoose.model("Library", librarySchema);

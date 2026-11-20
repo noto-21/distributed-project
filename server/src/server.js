@@ -4,6 +4,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const env = require("./config/env"); // validates BRANCH_ID, PORT, MONGO_URI, PEER_URLS
 const discoveryService = require("./services/discoveryService");
+const recoveryService = require("./services/recoveryService");
 
 // ---- Express app (routes/middleware go here) ----
 const app = express();
@@ -32,23 +33,38 @@ app.use("/internal", require("./routes/internalRoutes"));
 app.use((err, req, res, next) => {
   if (!err.isOperational) console.error(err);
   res.status(err.isOperational ? err.statusCode : 500).json(err.isOperational
-    ? { error: err.message, code: err.errorCode }
+    ? { error: err.message, code: err.errorCode, ...(err.details && { details: err.details }) }
     : { error: "Internal server error", code: "INTERNAL_ERROR" });
 });
 
 // ---- Process boot ----
-async function start() {
-  await mongoose.connect(env.mongoUri); // this branch's cluster only
-  console.log(`[${env.branchId}] connected to MongoDB`);
-  discoveryService.start(); // heartbeats mark dead peers unhealthy so searches skip them
+// Retry instead of crashing: under nodemon a crash is never restarted, so a brief Atlas outage at boot
+// would leave the branch dead. /healthz answers 503 meanwhile, so Docker/NGINX still see it as not ready.
+async function connectWithRetry({ connect = () => mongoose.connect(env.mongoUri), delayMs = 5000, log = console.error } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await connect();
+    } catch (err) {
+      log(`[${env.branchId}] MongoDB connect failed (attempt ${attempt}): ${err.message}. Retrying in ${delayMs / 1000}s`);
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
 
+async function start() {
   const server = app.listen(env.port, () =>
     console.log(`[${env.branchId}] listening on ${env.port}`),
   );
 
+  await connectWithRetry(); // this branch's cluster only
+  console.log(`[${env.branchId}] connected to MongoDB`);
+  discoveryService.start(); // heartbeats mark dead peers unhealthy so searches skip them
+  recoveryService.start(); // finishes or undoes transfers a crash left half-done
+
   const shutdown = (signal) => {
     console.log(`[${env.branchId}] ${signal} received, shutting down`);
     discoveryService.stop();
+    recoveryService.stop();
     server.close(async () => {
       // stop accepting, let in-flight requests finish
       await mongoose.connection.close();
@@ -69,3 +85,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+module.exports.connectWithRetry = connectWithRetry;

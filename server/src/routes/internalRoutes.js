@@ -25,10 +25,18 @@ router.get("/health", (req, res) => {
   });
 });
 
-// Used by transferSaga to receive a transferred Library row
+// Transfer saga: receive a copy; send one on a peer's request; report a saga's outcome (crash recovery)
 router.post("/transfers/receive", internalController.receiveTransfer);
+router.post("/transfers/send", internalController.sendTransfer);
+router.get("/transfers/:sagaId", internalController.transferStatus);
 
 // Used by catalogSearch when a peer has a local miss
 router.get("/books/:isbn10", internalController.lookupBook);
+
+// Users live at their home branch; other branches create, verify and read them through these
+router.get("/users/exists", internalController.userExists);
+router.post("/users/verify", internalController.verifyUser);
+router.post("/users", internalController.createUser);
+router.get("/users/:id", internalController.getUser);
 
 module.exports = router;

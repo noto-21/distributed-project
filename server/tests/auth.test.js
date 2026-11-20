@@ -4,7 +4,7 @@ process.env.MONGO_URI = 'mongodb://localhost:27017/library_test';
 process.env.GOOGLE_CLIENT_ID = 'test-client';
 process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
 
-jest.mock('../src/models/User', () => ({ create: jest.fn(), findOne: jest.fn(), findById: jest.fn() }));
+jest.mock('../src/models/User', () => ({ create: jest.fn(), findOne: jest.fn(), findById: jest.fn(), exists: jest.fn() }));
 
 const request = require('supertest');
 const bcrypt = require('bcryptjs');
@@ -21,7 +21,7 @@ beforeEach(() => jest.resetAllMocks());
 test('register hashes the password, forces patron role and returns a valid JWT', async () => {
   User.create.mockImplementation(async (doc) => fakeUser(doc));
   const res = await request(app).post('/api/auth/register')
-    .send({ email: 'a@b.co', password: 'password123', role: 'librarian' });
+    .send({ email: 'a@b.co', password: 'password123', role: 'librarian', homeBranch: 'ajax' });
 
   expect(res.status).toBe(201);
   const doc = User.create.mock.calls[0][0];
@@ -32,10 +32,16 @@ test('register hashes the password, forces patron role and returns a valid JWT',
 });
 
 test('register validates input and reports duplicate email', async () => {
-  expect((await request(app).post('/api/auth/register').send({ email: 'bad', password: 'password123' })).status).toBe(400);
-  expect((await request(app).post('/api/auth/register').send({ email: 'a@b.co', password: 'short' })).status).toBe(400);
-  User.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 11000 }));
-  expect((await request(app).post('/api/auth/register').send({ email: 'a@b.co', password: 'password123' })).status).toBe(409);
+  const reg = (body) => request(app).post('/api/auth/register').send({ homeBranch: 'ajax', ...body });
+  expect((await reg({ email: 'bad', password: 'password123' })).status).toBe(400);
+  expect((await reg({ email: 'a@b.co', password: 'short' })).status).toBe(400);
+  expect((await reg({ email: 'a@b.co', password: 'password123', homeBranch: undefined })).body.code).toBe('INVALID_HOME_BRANCH');
+  expect((await reg({ email: 'a@b.co', password: 'password123', homeBranch: 'toronto' })).status).toBe(400);
+  User.exists.mockResolvedValue(true); // already registered at this branch
+  expect((await reg({ email: 'a@b.co', password: 'password123' })).body.code).toBe('EMAIL_TAKEN');
+  User.exists.mockResolvedValue(null);
+  User.create.mockRejectedValue(Object.assign(new Error('dup'), { code: 11000 })); // lost a race to the unique index
+  expect((await reg({ email: 'a@b.co', password: 'password123' })).status).toBe(409);
 });
 
 test('login accepts the right password and rejects wrong / Google-only accounts', async () => {

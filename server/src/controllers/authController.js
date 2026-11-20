@@ -2,56 +2,86 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const env = require("../config/env");
 const User = require("../models/User");
+const AppError = require("../utils/AppError");
 const { signToken } = require("../middlewares/auth");
+const { callPeer, callAllPeers } = require("../services/peerClient");
+const userService = require("../services/userService");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STATE_COOKIE = "oauth_state";
 
-const authResponse = (user) => ({ token: signToken(user), user });
+// homeBranch in the response tells the client which /<branch>/ prefix to use from now on.
+const authResponse = (user) => ({ token: signToken(user), user, homeBranch: user.homeBranch });
 
-async function register(req, res) {
-  const { email, password, name } = req.body || {};
-  if (typeof email !== "string" || !EMAIL_RE.test(email))
-    return res.status(400).json({ error: "Valid email required" });
-  if (typeof password !== "string" || password.length < 8)
-    return res.status(400).json({ error: "Password must be at least 8 characters" });
-
+// POST /api/auth/register { email, password, name, homeBranch }
+// Any branch can take the request; the account is created in the chosen home branch's DB.
+async function register(req, res, next) {
   try {
-    // Role is never taken from the client; librarians are promoted in the DB.
-    const user = await User.create({
-      email,
-      name,
-      passwordHash: await bcrypt.hash(password, 10),
-      homeBranch: env.branchId,
-    });
-    res.status(201).json(authResponse(user));
+    const { email, password, name, homeBranch } = req.body || {};
+    if (typeof email !== "string" || !EMAIL_RE.test(email)) throw AppError.badRequest("Valid email required");
+    if (typeof password !== "string" || password.length < 8) throw AppError.badRequest("Password must be at least 8 characters");
+    if (!env.validBranches.includes(homeBranch)) {
+      throw AppError.badRequest(`homeBranch must be one of: ${env.validBranches.join(", ")}`, "INVALID_HOME_BRANCH");
+    }
+
+    // Hash here so only the hash ever crosses to another branch.
+    const passwordHash = await bcrypt.hash(password, 10);
+    if (homeBranch === env.branchId) {
+      const user = await userService.createHere({ email, name, passwordHash });
+      return res.status(201).json(authResponse(user));
+    }
+
+    const { status, body } = await callPeer(homeBranch, "POST", "/users", { email, name, passwordHash });
+    if (status !== 201) return res.status(status).json(body);
+    res.status(201).json(authResponse(body.user));
   } catch (err) {
-    if (err.code === 11000) return res.status(409).json({ error: "Email already registered" });
-    throw err;
+    if (err.errorCode === "PEER_OFFLINE" || err.errorCode === "PEER_UNAVAILABLE") {
+      return next(AppError.serviceUnavailable(`Home branch '${req.body.homeBranch}' is offline, try again shortly`, "HOME_BRANCH_OFFLINE"));
+    }
+    next(err);
   }
 }
 
-async function login(req, res) {
-  const { email, password } = req.body || {};
-  if (typeof email !== "string" || typeof password !== "string")
-    return res.status(400).json({ error: "Email and password required" });
+// POST /api/auth/login { email, password } at any branch. If the user isn't here, the branches that are
+// reachable are asked; whichever holds the account verifies the password.
+async function login(req, res, next) {
+  try {
+    const { email, password } = req.body || {};
+    if (typeof email !== "string" || typeof password !== "string") throw AppError.badRequest("Email and password required");
 
-  const user = await User.findOne({ email: email.toLowerCase().trim() });
-  // Same message for unknown email, Google-only account and wrong password.
-  if (!user?.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
-    return res.status(401).json({ error: "Invalid email or password" });
+    const local = await userService.verifyHere(email, password);
+    let user = local.user;
+    if (!local.exists) {
+      // Plain password goes to peers only over the internal network, guarded by INTERNAL_API_SECRET.
+      const answers = await callAllPeers("POST", "/users/verify", { email, password });
+      user = answers.find((a) => a.status === 200)?.body.user ?? null;
+    }
+    // Same message for unknown email, Google-only account and wrong password.
+    if (!user) return res.status(401).json({ error: "Invalid email or password", code: "INVALID_CREDENTIALS" });
+    res.json(authResponse(user));
+  } catch (err) {
+    next(err);
   }
-  res.json(authResponse(user));
 }
 
-async function me(req, res) {
-  const user = await User.findById(req.user.userId);
-  if (!user) return res.status(404).json({ error: "User not found" });
-  res.json({ user });
+async function me(req, res, next) {
+  try {
+    const { userId, homeBranch } = req.user;
+    if (homeBranch !== env.branchId) {
+      const { status, body } = await callPeer(homeBranch, "GET", `/users/${encodeURIComponent(userId)}`);
+      return res.status(status).json(body);
+    }
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found", code: "USER_NOT_FOUND" });
+    res.json({ user });
+  } catch (err) {
+    next(err);
+  }
 }
 
 // ---- Google OAuth 2.0 (authorization code flow) ----
 // State lives in a cookie, not server memory, so start and callback may hit different replicas.
+// The home branch of a NEW Google user is the branch whose /<branch>/api/auth/google URL started the flow.
 
 function googleStart(req, res) {
   if (!env.google) return res.status(501).json({ error: "Google OAuth not configured" });
@@ -120,6 +150,10 @@ async function googleCallback(req, res) {
     await user.save();
   }
   if (!user) {
+    const elsewhere = await userService.emailTakenElsewhere(profile.email.toLowerCase());
+    if (elsewhere) {
+      return res.redirect(`${env.clientUrl}/auth/callback#error=account_at_${elsewhere}`);
+    }
     user = await User.create({
       email: profile.email,
       name: profile.name,
