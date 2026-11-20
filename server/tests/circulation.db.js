@@ -104,6 +104,8 @@ describe("patron requests a book to their home branch", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: "TRANSFERRED", from: "whitby", to: "oshawa" });
+    // What the patron sees: one sentence, no saga details.
+    expect(res.body.message.startsWith("Whitby is sending “Gilead” to your branch (Oshawa). It will be held for you until ")).toBe(true);
     expect(fake.whitby.seen.find((r) => r.url === "/internal/transfers/send").body).toEqual({ isbn10: book.isbn10, targetBranch: "oshawa", holdFor: "pat-1" });
     const here = await Library.findOne({ isbn10: book.isbn10 }).lean();
     // It arrives reserved for the patron who asked, for HOLD_DAYS.
@@ -139,10 +141,12 @@ describe("patron requests a book to their home branch", () => {
     expect(res.body.warning).toMatch(/whitby/);
   });
 
-  test("must be made at your home branch", async () => {
+  test("an ajax patron's request that lands here is run by ajax, not here", async () => {
+    fake.ajax.behave = (req) => (req.url === "/api/circulation/requests" ? [200, { status: "ON_HOLD", message: "held at Ajax" }] : [404, {}]);
     const res = await ask("TEST-CR-001", patron("ajax"));
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe("NOT_HOME_BRANCH");
+    expect(res.body.message).toBe("held at Ajax");
+    expect(fake.ajax.seen.map((r) => r.url)).toEqual(["/api/circulation/requests"]);
+    expect(await Library.countDocuments({ isbn10: "TEST-CR-001" })).toBe(0); // nothing happened at oshawa
   });
 });
 
@@ -256,6 +260,7 @@ describe("checkout, return, loans and custody history", () => {
     const res = await post("return", "TEST-CR-012");
 
     expect(res.body.routedTo).toBe("ajax");
+    expect(res.body.message).toBe("Thanks for returning “Copy TEST-CR-012”. It's going back to Ajax.");
     const sent = fake.ajax.seen.find((r) => r.url === "/internal/transfers/receive").body;
     expect(sent.bookData).toMatchObject({ originBranch: "ajax", currentBranch: "ajax" });
     expect(sent.bookData.custodyHistory.map((e) => e.event)).toEqual(["CHECKOUT", "RETURN"]); // history travels with the copy

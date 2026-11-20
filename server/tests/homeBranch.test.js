@@ -38,6 +38,7 @@ beforeAll(async () => {
         return body.password === "password123" ? send(200, { user: AJAX_USER, refreshToken: "ajax.rt-login" }) : send(401, { code: "INVALID_CREDENTIALS" });
       }
       if (req.url === "/internal/users/a1") return send(200, { user: AJAX_USER });
+      if (req.url === "/api/auth/me") return send(200, { user: AJAX_USER }); // ajax's own public route
       send(404, {});
     });
   });
@@ -120,11 +121,14 @@ describe("login works at any branch", () => {
     expect(seen).toHaveLength(0);
   });
 
-  test("/me for a user whose home is elsewhere is read from the home branch", async () => {
-    const res = await request(app).get("/api/auth/me").set("Authorization", `Bearer ${signToken(AJAX_USER)}`);
+  test("/me for a user whose home is elsewhere is answered by the home branch (whole request forwarded)", async () => {
+    const token = signToken(AJAX_USER);
+    const res = await request(app).get("/api/auth/me").set("Authorization", `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(res.body.user.email).toBe("amy@ajax.ca");
+    expect(res.headers["x-served-by-branch"]).toBe("ajax");
     expect(User.findById).not.toHaveBeenCalled();
+    expect(seen[0].headers.authorization).toBe(`Bearer ${token}`); // ajax checks the same token itself
   });
 });
 

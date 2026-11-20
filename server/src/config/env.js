@@ -71,6 +71,8 @@ function loadEnv(env = process.env) {
           }
         : null,
     peerTimeoutMs: Number(env.PEER_TIMEOUT_MS) || 3000,
+    // A request forwarded to the user's home branch may itself search peers and run a transfer.
+    forwardTimeoutMs: Number(env.FORWARD_TIMEOUT_MS) || 15000,
     discoveryIntervalMs: Number(env.DISCOVERY_INTERVAL_MS) || 5000,
 
     internalSecret: env.INTERNAL_API_SECRET || "dev-internal-secret-change-in-prod",

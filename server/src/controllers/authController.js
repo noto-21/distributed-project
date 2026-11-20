@@ -6,6 +6,7 @@ const AppError = require("../utils/AppError");
 const { signToken } = require("../middlewares/auth");
 const { callPeer, callAllPeers } = require("../services/peerClient");
 const userService = require("../services/userService");
+const discoveryService = require("../services/discoveryService");
 const tokenService = require("../services/tokenService");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -58,6 +59,12 @@ async function login(req, res, next) {
       const answers = await callAllPeers("POST", "/users/verify", { email, password });
       const home = answers.find((a) => a.status === 200);
       if (home) return res.json(remoteSession(home.body));
+      // Nobody vouched for the account, but some branch couldn't be asked: it may live there.
+      const peers = [...discoveryService.peers.keys()];
+      const unreached = peers.filter((b) => !answers.some((a) => a.branch === b));
+      if (unreached.length && !answers.some((a) => a.status === 401)) {
+        throw AppError.serviceUnavailable("We can't reach every branch right now, so we can't verify your account. Please try again shortly", "HOME_BRANCH_OFFLINE", { unreachable: unreached });
+      }
     }
     // Same message for unknown email, Google-only account and wrong password.
     res.status(401).json({ error: "Invalid email or password", code: "INVALID_CREDENTIALS" });
@@ -87,12 +94,7 @@ async function logout(req, res, next) {
 
 async function me(req, res, next) {
   try {
-    const { userId, homeBranch } = req.user;
-    if (homeBranch !== env.branchId) {
-      const { status, body } = await callPeer(homeBranch, "GET", `/users/${encodeURIComponent(userId)}`);
-      return res.status(status).json(body);
-    }
-    const user = await User.findById(userId);
+    const user = await User.findById(req.user.userId); // routeToHome already moved us to the home branch
     if (!user) return res.status(404).json({ error: "User not found", code: "USER_NOT_FOUND" });
     res.json({ user });
   } catch (err) {
@@ -106,6 +108,11 @@ async function me(req, res, next) {
 
 function googleStart(req, res) {
   if (!env.google) return res.status(501).json({ error: "Google OAuth not configured" });
+  // /api/auth/google?homeBranch=oshawa: hand off to that branch, whose callback makes it a new user's home.
+  const { homeBranch } = req.query;
+  if (env.validBranches.includes(homeBranch) && homeBranch !== env.branchId) {
+    return res.redirect(`/${homeBranch}/api/auth/google`);
+  }
   const state = crypto.randomBytes(16).toString("hex");
   res.cookie(STATE_COOKIE, state, {
     httpOnly: true,
