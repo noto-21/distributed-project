@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/seeds/seedBranch.js",
+    "demo": "node scripts/demo.js",
     "check:db": "node src/config/checkConnections.js",
     "test": "jest --runInBand --forceExit",
     "test:lb": "jest --runInBand --testMatch \"**/tests/*.lb.js\"",

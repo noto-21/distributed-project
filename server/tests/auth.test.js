@@ -59,10 +59,12 @@ test('login accepts the right password and rejects wrong / Google-only accounts'
 
 test('/me requires a valid, unexpired token', async () => {
   User.findById.mockResolvedValue(fakeUser());
-  expect((await request(app).get('/api/auth/me')).status).toBe(401);
-  expect((await request(app).get('/api/auth/me').set('Authorization', 'Bearer garbage')).status).toBe(401);
+  expect((await request(app).get('/api/auth/me')).body).toMatchObject({ code: 'UNAUTHORIZED' });
+  expect((await request(app).get('/api/auth/me').set('Authorization', 'Bearer garbage')).body.code).toBe('TOKEN_INVALID');
   const expired = jwt.sign({ userId: 'u1' }, env.jwtSecret, { expiresIn: -1 });
-  expect((await request(app).get('/api/auth/me').set('Authorization', `Bearer ${expired}`)).status).toBe(401);
+  const exp = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${expired}`);
+  expect(exp.status).toBe(401);
+  expect(exp.body.code).toBe('TOKEN_EXPIRED'); // the client's cue to call /api/auth/refresh
   const forged = jwt.sign({ userId: 'u1' }, 'wrong-secret');
   expect((await request(app).get('/api/auth/me').set('Authorization', `Bearer ${forged}`)).status).toBe(401);
 
