@@ -7,6 +7,12 @@ const AppError = require("../utils/AppError");
 const Library = require("../models/Library");
 const Loan = require("../models/Loan");
 const env = require("../config/env");
+const { NAMES } = require("../middlewares/homeRouter");
+
+// What the patron reads. Structured fields stay alongside for the UI.
+const branchName = (b) => NAMES[b] || b;
+const day = (d) => new Date(d).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Toronto" });
+const heldMsg = (title, home, until) => `“${title}” is on hold for you at ${branchName(home)} until ${day(until)}.`;
 
 const requireIsbn = (body) => {
   const { isbn10 } = body || {};
@@ -47,7 +53,9 @@ exports.requestTransfer = async (req, res, next) => {
     const { userId } = req.user;
     const holdExpiresAt = () => new Date(Date.now() + env.holdDays * 86_400_000);
     const alreadyHeld = await Library.findOne({ isbn10, currentBranch: home, status: "ON_HOLD", heldFor: userId }).lean();
-    if (alreadyHeld) return res.status(200).json({ status: "ON_HOLD", branch: home, holdExpiresAt: alreadyHeld.holdExpiresAt, book: alreadyHeld });
+    if (alreadyHeld) {
+      return res.status(200).json({ status: "ON_HOLD", message: heldMsg(alreadyHeld.title, home, alreadyHeld.holdExpiresAt), branch: home, holdExpiresAt: alreadyHeld.holdExpiresAt, book: alreadyHeld });
+    }
 
     // On the shelf here: hold it for this patron (atomic, so two requesters can't both get it).
     const heldHere = await Library.findOneAndUpdate(
@@ -55,7 +63,9 @@ exports.requestTransfer = async (req, res, next) => {
       { $set: { status: "ON_HOLD", heldFor: userId, holdExpiresAt: holdExpiresAt() } },
       { returnDocument: "after" },
     );
-    if (heldHere) return res.status(200).json({ status: "ON_HOLD", branch: home, holdExpiresAt: heldHere.holdExpiresAt, book: heldHere });
+    if (heldHere) {
+      return res.status(200).json({ status: "ON_HOLD", message: heldMsg(heldHere.title, home, heldHere.holdExpiresAt), branch: home, holdExpiresAt: heldHere.holdExpiresAt, book: heldHere });
+    }
 
     const search = await catalogSearch.findBook(isbn10);
     // A copy was returned here between our hold attempt and the search: let the client simply retry.
@@ -67,8 +77,16 @@ exports.requestTransfer = async (req, res, next) => {
       try {
         const { status, body } = await callPeer(branch, "POST", "/transfers/send", { isbn10, targetBranch: home, holdFor: userId });
         if (status === 200) {
-          const arrived = await Library.findOne({ isbn10, currentBranch: home }, { holdExpiresAt: 1 }).lean();
-          return res.status(200).json({ status: "TRANSFERRED", from: branch, to: home, holdExpiresAt: arrived?.holdExpiresAt ?? null, transfer: body.transfer });
+          const arrived = await Library.findOne({ isbn10, currentBranch: home }, { holdExpiresAt: 1, title: 1 }).lean();
+          const title = arrived?.title ?? search.foundAt.find((f) => f.branch === branch)?.book?.title ?? isbn10;
+          return res.status(200).json({
+            status: "TRANSFERRED",
+            message: `${branchName(branch)} is sending “${title}” to your branch (${branchName(home)}). It will be held for you until ${day(arrived?.holdExpiresAt)}.`,
+            from: branch,
+            to: home,
+            holdExpiresAt: arrived?.holdExpiresAt ?? null,
+            transfer: body.transfer,
+          });
         }
         if (status === 409) lostRace = true;
       } catch {
@@ -78,7 +96,7 @@ exports.requestTransfer = async (req, res, next) => {
 
     const warning = offline.length ? `Branch(es) unreachable: ${offline.join(", ")}.` : undefined;
     if (lostRace) throw AppError.conflict("Every available copy was taken or is already moving", "BOOK_UNAVAILABLE", { offline, warning });
-    res.status(404).json({ error: `No branch can send '${isbn10}' right now`, code: "BOOK_NOT_FOUND", offline, warning });
+    res.status(404).json({ error: "No branch has this book available right now", code: "BOOK_NOT_FOUND", offline, warning });
   } catch (err) {
     next(err);
   }
@@ -118,7 +136,7 @@ exports.checkout = async (req, res, next) => {
       const loan = await Loan.create({
         isbn10, userId, branch: env.branchId, checkoutLamport: lamport, dueAt: new Date(Date.now() + env.loanDays * 86_400_000),
       });
-      res.status(200).json({ message: "Book checked out", book, loan });
+      res.status(200).json({ message: `Enjoy “${book.title}”! Please return it by ${day(loan.dueAt)}.`, book, loan });
     } catch (err) {
       // No loan record means nobody could ever return it: give the copy back rather than strand it.
       await Library.updateOne(
@@ -162,14 +180,15 @@ exports.returnBook = async (req, res, next) => {
     const late = Boolean(loan?.dueAt && loan.dueAt < new Date());
 
     const origin = book.originBranch;
-    if (!origin || origin === env.branchId) return res.status(200).json({ message: "Book returned", book, late, routedTo: null });
+    const thanks = `Thanks for returning “${book.title}”${late ? " (it was overdue)" : ""}.`;
+    if (!origin || origin === env.branchId) return res.status(200).json({ message: thanks, book, late, routedTo: null });
 
     try {
       const transfer = await transferSaga.executeTransfer({ isbn10, targetBranch: origin });
-      res.status(200).json({ message: `Book returned and sent home to ${origin}`, late, routedTo: origin, transfer });
+      res.status(200).json({ message: `${thanks} It's going back to ${branchName(origin)}.`, late, routedTo: origin, transfer });
     } catch (err) {
       res.status(200).json({
-        message: "Book returned",
+        message: thanks,
         book,
         late,
         routedTo: null,

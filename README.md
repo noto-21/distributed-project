@@ -69,7 +69,7 @@ flowchart TB
 
 > **Frontend team:** the full contract (request and response shapes, error codes, session handling) is in **[docs/api.md](docs/api.md)**.
 
-All public routes go through the gateway as `http://localhost:8090/<branch>/...`, e.g. `/oshawa/api/circulation/books/0262033844`.
+**The app uses one entry point: `http://localhost:8090/api/...`.** NGINX hands each call to any branch. Once a user is signed in, whichever branch receives the call forwards it to the user's **home branch** (`middlewares/homeRouter.js`), so loans, holds and requests all live in one place, and patrons never deal with other branches. `http://localhost:8090/<branch>/...` still reaches one branch directly, for health checks, Google callbacks and the demo.
 
 | Method & path | Auth | Purpose |
 | :--- | :--- | :--- |
@@ -81,7 +81,7 @@ All public routes go through the gateway as `http://localhost:8090/<branch>/...`
 | `GET /api/auth/me` | JWT | Current user (read from their home branch) |
 | `GET /api/auth/google` | – | Start Google sign-in, which ends at `CLIENT_URL/auth/callback#token=…`. A new Google user's home is the branch in the URL. |
 | `GET /api/circulation/books/:isbn10` | – | Federated search: 200 with `foundAt`, or 404. Includes `offline` and `warning` when peers are down. |
-| `POST /api/circulation/requests` | JWT (at your home branch) | `{ isbn10 }`: bring a copy here from whichever branch has it. → `TRANSFERRED` / `AVAILABLE_HERE`; 404 / 409 otherwise; 400 `NOT_HOME_BRANCH` |
+| `POST /api/circulation/requests` | JWT | `{ isbn10 }`: bring a copy to your branch from whichever branch has it; it's held for you. Returns a patron-ready `message`, e.g. "Whitby is sending “Gilead” to your branch (Oshawa)…". 404 / 409 otherwise |
 | `POST /api/circulation/checkout` | JWT | `{ isbn10 }`: borrow a copy held here. 409 `BOOK_UNAVAILABLE`, 404 `BOOK_NOT_FOUND`. |
 | `POST /api/circulation/return` | JWT | `{ isbn10 }`: return a copy you borrowed here. `routedTo` names its origin branch if it was sent home. 409 `NOT_BORROWED_BY_YOU`. |
 | `GET /api/circulation/loans/me` | JWT | Your loans at this branch, newest first, with `dueAt` and `overdue` |

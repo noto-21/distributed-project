@@ -1,17 +1,21 @@
 // Public circulation API: /<branch>/api/circulation/... through NGINX
 const express = require("express");
 const circulationController = require("../controllers/circulationController");
-const { requireAuth, requireRole } = require("../middlewares/auth");
+const { requireAuth, optionalAuth, requireRole } = require("../middlewares/auth");
+const { routeToHome } = require("../middlewares/homeRouter");
 
 const router = express.Router();
 
-router.get("/books/:isbn10", circulationController.findBook);
-router.post("/requests", requireAuth, circulationController.requestTransfer); // patron: bring a copy to my home branch
-router.post("/checkout", requireAuth, circulationController.checkout);
-router.post("/return", requireAuth, circulationController.returnBook);
-router.get("/loans/me", requireAuth, circulationController.myLoans);
-router.get("/holds/me", requireAuth, circulationController.myHolds);
-router.get("/loans/overdue", requireAuth, requireRole("librarian"), circulationController.overdueLoans);
-router.post("/transfers", requireAuth, requireRole("librarian"), circulationController.transferBook); // librarian push
+// Signed-in requests always run at the user's home branch (routeToHome forwards them if NGINX picked another).
+// Search works signed out too; signed in, it starts from the home branch's shelf.
+const home = [requireAuth, routeToHome];
+router.get("/books/:isbn10", optionalAuth, routeToHome, circulationController.findBook);
+router.post("/requests", ...home, circulationController.requestTransfer); // patron: bring a copy to my branch
+router.post("/checkout", ...home, circulationController.checkout);
+router.post("/return", ...home, circulationController.returnBook);
+router.get("/loans/me", ...home, circulationController.myLoans);
+router.get("/holds/me", ...home, circulationController.myHolds);
+router.get("/loans/overdue", ...home, requireRole("librarian"), circulationController.overdueLoans); // librarian's own branch
+router.post("/transfers", ...home, requireRole("librarian"), circulationController.transferBook); // librarian push
 
 module.exports = router;

@@ -6,8 +6,8 @@ Everything the React app needs to talk to the backend. Every example here was ru
 
 | | |
 | :--- | :--- |
-| **Base URL** | `http://localhost:8090/<branch>` where `<branch>` is `ajax`, `oshawa` or `whitby` |
-| **Which branch?** | Before login, any. After login, use the **`homeBranch`** from the login response for everything. |
+| **Base URL** | **`http://localhost:8090/api`**: one URL for everything. Never put a branch in it. |
+| **Which branch?** | You don't choose. Once signed in, every request runs at the user's **home branch**: whichever branch receives it forwards it there. `homeBranch` in the login response is just for display. |
 | **Format** | JSON in, JSON out. Send `Content-Type: application/json`. |
 | **Auth** | `Authorization: Bearer <token>` on routes marked 🔒 |
 | **CORS** | Allowed origin: `http://localhost:5173` (set `CORS_ORIGINS` on the server for others). No cookies are used. |
@@ -23,13 +23,13 @@ Every error has the same shape. Branch on `code`, not on the message text.
 
 | Status | Codes |
 | :--- | :--- |
-| 400 | `BAD_REQUEST`, `INVALID_JSON`, `INVALID_HOME_BRANCH`, `NOT_HOME_BRANCH` |
+| 400 | `BAD_REQUEST`, `INVALID_JSON`, `INVALID_HOME_BRANCH` |
 | 401 | `UNAUTHORIZED` (no token), `TOKEN_EXPIRED` (refresh it), `TOKEN_INVALID`, `INVALID_CREDENTIALS`, `INVALID_REFRESH_TOKEN`, `REFRESH_TOKEN_REUSED` |
 | 403 | `FORBIDDEN` (wrong role) |
 | 404 | `BOOK_NOT_FOUND`, `USER_NOT_FOUND` |
 | 409 | `EMAIL_TAKEN`, `BOOK_UNAVAILABLE`, `NOT_BORROWED_BY_YOU`, `RETRY` |
 | 429 | `RATE_LIMITED` |
-| 503 | `HOME_BRANCH_OFFLINE`, `PEER_UNAVAILABLE` |
+| 503 | `HOME_BRANCH_OFFLINE` (the user's branch is down: show "your branch is temporarily unavailable"), `PEER_UNAVAILABLE` |
 | 500 | `INTERNAL_ERROR` (never includes internals) |
 
 ---
@@ -45,8 +45,8 @@ Sign-in returns two tokens:
 
 Recommended client flow:
 
-1. Login or signup: store `token`, `refreshToken` and `homeBranch`.
-2. Call 🔒 routes at `/<homeBranch>/api/...`.
+1. Login or signup: store `token` and `refreshToken`.
+2. Call 🔒 routes at `/api/...` with the token; the backend takes care of reaching the user's branch.
 3. On `401 TOKEN_EXPIRED`, call `/refresh` **once** with the stored `refreshToken`, store **both** new values, then retry the request.
 4. If refresh fails (`INVALID_REFRESH_TOKEN` or `REFRESH_TOKEN_REUSED`), or you get `TOKEN_INVALID`, the user must log in again.
 5. Never send the same refresh token twice. A reused token is treated as stolen, and **all** of that user's sessions are revoked. If several requests get `TOKEN_EXPIRED` at once, run one shared refresh and make the others wait for it.
@@ -80,7 +80,7 @@ Works at any branch.
 { "email": "amy@example.com", "password": "…" }
 ```
 
-`200`: the same shape as register. Error: `401 INVALID_CREDENTIALS` (the same answer for an unknown email and a wrong password).
+`200`: the same shape as register. Errors: `401 INVALID_CREDENTIALS` (the same answer for an unknown email and a wrong password); `503 HOME_BRANCH_OFFLINE` when the branch holding the account can't be reached right now.
 
 ### `POST /refresh`
 
@@ -102,7 +102,7 @@ Body: `{ "refreshToken": "ajax.Xb3…" }`. Returns `204`, and is idempotent. Aft
 
 ### Google sign-in
 
-1. Send the browser (a full page navigation, not `fetch`) to `/<branch>/api/auth/google`. **For a new user, that branch becomes their home.**
+1. Send the browser (a full page navigation, not `fetch`) to `/api/auth/google?homeBranch=oshawa`, using the branch the user picked. **For a new user, that becomes their home.** Existing users are found wherever they are.
 2. Google sends them back to `http://localhost:5173/auth/callback#token=…&refreshToken=…`.
 3. Read both from `location.hash` with `new URLSearchParams(location.hash.slice(1))`, then call `/me` to get the user and `homeBranch`.
 4. On failure, the fragment is `#error=<reason>`. `account_at_<branch>` means the email is already registered with a password at that branch, so the user should log in there.
@@ -137,9 +137,11 @@ Search. Checks this branch first, then all others.
 
 `404` with the same shape and `foundAt: []` when no reachable branch has it. **When `warning` is present, show it**: some branches couldn't be searched.
 
-### `POST /requests` 🔒 (at your home branch)
+### `POST /requests` 🔒
 
 "Bring this book to my branch." Body: `{ "isbn10": "0002005883" }`
+
+Show **`message`** to the patron. It's written for them, e.g. *"Whitby is sending “Gilead” to your branch (Oshawa). It will be held for you until Sun, Nov 22."* The other fields are for your UI logic.
 
 | Result | Meaning |
 | :--- | :--- |
@@ -148,7 +150,6 @@ Search. Checks this branch first, then all others.
 | `404 BOOK_NOT_FOUND` (with `offline`, `warning`) | No reachable branch can send it |
 | `409 BOOK_UNAVAILABLE` | Every copy was just taken |
 | `409 RETRY` | A copy appeared here mid-request; just retry |
-| `400 NOT_HOME_BRANCH` | You called a branch other than your `homeBranch` |
 
 Holds last `HOLD_DAYS` (3 by default). After that, the copy goes back on the shelf.
 
@@ -158,7 +159,7 @@ Holds last `HOLD_DAYS` (3 by default). After that, the copy goes back on the she
 
 ### `POST /checkout` 🔒
 
-Body: `{ "isbn10": "…" }`. Takes a copy that is on the shelf, or on hold **for you**.
+Body: `{ "isbn10": "…" }`. Takes a copy at your branch that is on the shelf, or on hold **for you**. `message` reads like *"Enjoy “Gilead”! Please return it by Thu, Dec 3."*
 
 `200`:
 
@@ -171,7 +172,7 @@ Errors: `409 BOOK_UNAVAILABLE` (borrowed, in transit, or held for someone else);
 
 ### `POST /return` 🔒
 
-Body: `{ "isbn10": "…" }`. Return it at the branch where you borrowed it.
+Body: `{ "isbn10": "…" }`. `message` reads like *"Thanks for returning “Gilead”. It's going back to Whitby."*
 
 `200 { message, late, routedTo, … }`:
 - `late: true` means it was returned after `dueAt`.
@@ -182,18 +183,20 @@ Errors: `409 NOT_BORROWED_BY_YOU`, `404 BOOK_NOT_FOUND`.
 
 ### `GET /loans/me` 🔒
 
-`200 { "loans": [ { "isbn10", "status": "ACTIVE | RETURNED", "dueAt", "overdue": true, "checkoutLamport", "returnLamport" } ] }`, newest first, at this branch.
+`200 { "loans": [ { "isbn10", "status": "ACTIVE | RETURNED", "dueAt", "overdue": true, "checkoutLamport", "returnLamport" } ] }`, newest first. This is the complete list, since every loan happens at the user's branch.
 
 ### `GET /loans/overdue` 🔒 librarian
 
-`200 { "loans": [ ] }`: active loans past due at this branch, most overdue first. Patrons get `403 FORBIDDEN`.
+`200 { "loans": [ ] }`: active loans past due at the librarian's own branch, most overdue first. Patrons get `403 FORBIDDEN`.
 
 ### `POST /transfers` 🔒 librarian
 
-Body: `{ "isbn10", "targetBranch" }`. Pushes a copy from this branch to another. Patrons get `403 FORBIDDEN`.
+Body: `{ "isbn10", "targetBranch" }`. Pushes a copy from the librarian's branch to another. Patrons get `403 FORBIDDEN`.
 
 ---
 
 ## Health
+
+Per-branch URLs (`http://localhost:8090/<branch>/...`) still exist for operations, but the app never needs them.
 
 `GET /<branch>/healthz` → `200 { status: "ok", branchId, instance }`, or `503 { status: "db-unavailable" }` while that branch's database is unreachable.

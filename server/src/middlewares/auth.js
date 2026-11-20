@@ -22,10 +22,23 @@ function requireAuth(req, res, next) {
   }
 }
 
+// For routes that work signed out too (search): reads a valid token if present, never rejects.
+function optionalAuth(req, res, next) {
+  const [scheme, token] = (req.headers.authorization || "").split(" ");
+  if (scheme === "Bearer" && token) {
+    try {
+      req.user = jwt.verify(token, env.jwtSecret, { algorithms: ["HS256"] });
+    } catch {
+      /* treat a bad or expired token as signed out */
+    }
+  }
+  next();
+}
+
 // Use after requireAuth, e.g. router.post('/books', requireAuth, requireRole('librarian'), ...)
 const requireRole =
   (...roles) =>
   (req, res, next) =>
     roles.includes(req.user?.role) ? next() : res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
 
-module.exports = { signToken, requireAuth, requireRole };
+module.exports = { signToken, requireAuth, optionalAuth, requireRole };
