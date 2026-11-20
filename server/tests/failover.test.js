@@ -106,6 +106,14 @@ describe("search with a peer down", () => {
     expect(res.body.warning).toMatch(/ajax/);
   });
 
+  test("a malformed JSON body is the client's error: 400 INVALID_JSON, not a 500", async () => {
+    // Exactly what PowerShell/cmd send for a Git Bash style  -d '{"email":...}'  (quotes mangled)
+    const res = await request(app).post("/api/auth/register").set("Content-Type", "application/json")
+      .send("'{email:demo@test.local,password:password123,homeBranch:ajax}'");
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "Request body is not valid JSON", code: "INVALID_JSON" });
+  });
+
   test("local DB failure surfaces as a JSON 500 without leaking internals", async () => {
     Library.findOne.mockRejectedValue(new Error("connection pool exploded at 10.0.0.5"));
     const log = jest.spyOn(console, "error").mockImplementation(() => {}); // expected: handler logs real 500s
