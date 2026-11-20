@@ -35,8 +35,13 @@ router.get("/books/:isbn10", internalController.lookupBook);
 
 // Users live at their home branch; other branches create, verify and read them through these
 router.get("/users/exists", internalController.userExists);
+router.post("/users/lookup", internalController.lookupUsers);
 router.post("/users/verify", internalController.verifyUser);
 router.post("/users", internalController.createUser);
 router.get("/users/:id", internalController.getUser);
+
+// Refresh tokens are stored at the user's home branch; other branches forward refresh/logout here
+router.post("/auth/refresh", internalController.refreshToken);
+router.post("/auth/logout", internalController.logoutToken);
 
 module.exports = router;

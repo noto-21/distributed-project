@@ -4,11 +4,16 @@ const express = require("express");
 const mongoose = require("mongoose");
 const env = require("./config/env"); // validates BRANCH_ID, PORT, MONGO_URI, PEER_URLS
 const discoveryService = require("./services/discoveryService");
-const recoveryService = require("./services/recoveryService");
+const maintenance = require("./services/maintenance");
+const { corsPolicy, securityHeaders } = require("./middlewares/security");
 
 // ---- Express app (routes/middleware go here) ----
 const app = express();
-app.use(express.json());
+app.disable("x-powered-by");
+app.set("trust proxy", 1); // one hop: NGINX. req.ip is then the real client for rate limiting
+app.use(securityHeaders);
+app.use(corsPolicy);
+app.use(express.json({ limit: "100kb" }));
 
 // Readiness: 200 only when this branch's DB connection is up. instance = container hostname (which replica answered).
 app.get("/healthz", (req, res) => {
@@ -65,12 +70,12 @@ async function start() {
   await connectWithRetry(); // this branch's cluster only
   console.log(`[${env.branchId}] connected to MongoDB`);
   discoveryService.start(); // heartbeats mark dead peers unhealthy so searches skip them
-  recoveryService.start(); // finishes or undoes transfers a crash left half-done
+  maintenance.start(); // saga crash recovery, expired holds, duplicate-email repair
 
   const shutdown = (signal) => {
     console.log(`[${env.branchId}] ${signal} received, shutting down`);
     discoveryService.stop();
-    recoveryService.stop();
+    maintenance.stop();
     server.close(async () => {
       // stop accepting, let in-flight requests finish
       await mongoose.connection.close();

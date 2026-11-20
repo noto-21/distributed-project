@@ -7,6 +7,8 @@ const AppError = require("../utils/AppError");
 const discoveryService = require("../services/discoveryService");
 const transferSaga = require("../services/transferSaga");
 const userService = require("../services/userService");
+const tokenService = require("../services/tokenService");
+const env = require("../config/env");
 
 const receiveEvent = (req) => lamportClock.sync(req.headers?.["x-lamport-timestamp"]); // max(local, sender) + 1
 const stamp = (res) => res.set("x-lamport-timestamp", String(lamportClock.tick()));
@@ -16,7 +18,7 @@ const stamp = (res) => res.set("x-lamport-timestamp", String(lamportClock.tick()
 // POST /transfers/receive { sagaId, sourceBranch, bookData }: target side of the transfer saga. Idempotent by sagaId.
 exports.receiveTransfer = async (req, res, next) => {
   try {
-    const { sagaId, sourceBranch, bookData } = req.body;
+    const { sagaId, sourceBranch, bookData, holdFor } = req.body;
     const targetBranch = discoveryService.selfBranch;
     receiveEvent(req);
 
@@ -34,7 +36,10 @@ exports.receiveTransfer = async (req, res, next) => {
       createdBook = await Library.create({
         ...bookData,
         currentBranch: targetBranch,
-        status: "AVAILABLE",
+        // A copy sent for a patron's request waits for them; anything else goes on the shelf.
+        status: holdFor ? "ON_HOLD" : "AVAILABLE",
+        heldFor: holdFor || null,
+        holdExpiresAt: holdFor ? new Date(Date.now() + env.holdDays * 86_400_000) : null,
         activeTransferId: null,
         borrowedBy: null,
         originBranch: bookData.originBranch || sourceBranch,
@@ -63,9 +68,10 @@ exports.receiveTransfer = async (req, res, next) => {
 exports.sendTransfer = async (req, res, next) => {
   try {
     receiveEvent(req);
-    const { isbn10, targetBranch } = req.body || {};
+    const { isbn10, targetBranch, holdFor } = req.body || {};
     if (typeof isbn10 !== "string" || typeof targetBranch !== "string") throw AppError.badRequest("isbn10 and targetBranch are required");
-    const transfer = await transferSaga.executeTransfer({ isbn10, targetBranch });
+    if (holdFor !== undefined && typeof holdFor !== "string") throw AppError.badRequest("holdFor must be a userId");
+    const transfer = await transferSaga.executeTransfer({ isbn10, targetBranch, holdFor });
     stamp(res);
     res.status(200).json({ transfer });
   } catch (err) {
@@ -118,7 +124,7 @@ exports.userExists = async (req, res, next) => {
     receiveEvent(req);
     stamp(res);
     const email = typeof req.query.email === "string" ? req.query.email.toLowerCase().trim() : "";
-    res.json({ exists: Boolean(email) && Boolean(await User.exists({ email })) });
+    res.json({ exists: Boolean(email) && Boolean(await User.exists({ email, ...userService.ACTIVE })) });
   } catch (err) {
     next(err);
   }
@@ -133,8 +139,9 @@ exports.createUser = async (req, res, next) => {
       throw AppError.badRequest("email and a bcrypt passwordHash are required");
     }
     const user = await userService.createHere({ email, name, passwordHash });
+    const refreshToken = await tokenService.issueRefresh(user._id); // stored here, at the user's home
     stamp(res);
-    res.status(201).json({ user });
+    res.status(201).json({ user, refreshToken });
   } catch (err) {
     next(err);
   }
@@ -150,7 +157,42 @@ exports.verifyUser = async (req, res, next) => {
     stamp(res);
     if (!exists) return res.status(404).json({ found: false });
     if (!user) return res.status(401).json({ error: "Invalid email or password", code: "INVALID_CREDENTIALS" });
-    res.json({ user });
+    res.json({ user, refreshToken: await tokenService.issueRefresh(user._id) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /users/lookup { emails }: active accounts here among these emails, with creation order (reconciliation).
+exports.lookupUsers = async (req, res, next) => {
+  try {
+    receiveEvent(req);
+    const emails = Array.isArray(req.body?.emails) ? req.body.emails.filter((e) => typeof e === "string").slice(0, 10_000) : [];
+    stamp(res);
+    res.json({ users: await userService.activeByEmail(emails) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /auth/refresh | /auth/logout { refreshToken }: the token's home branch does the work.
+exports.refreshToken = async (req, res, next) => {
+  try {
+    receiveEvent(req);
+    const session = await tokenService.refreshHere(String(req.body?.refreshToken || ""));
+    stamp(res);
+    res.json(session);
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.logoutToken = async (req, res, next) => {
+  try {
+    receiveEvent(req);
+    await tokenService.logoutHere(String(req.body?.refreshToken || ""));
+    stamp(res);
+    res.status(200).json({ ok: true });
   } catch (err) {
     next(err);
   }

@@ -11,12 +11,14 @@ const signToken = (user) =>
 
 function requireAuth(req, res, next) {
   const [scheme, token] = (req.headers.authorization || "").split(" ");
-  if (scheme !== "Bearer" || !token) return res.status(401).json({ error: "Missing bearer token" });
+  if (scheme !== "Bearer" || !token) return res.status(401).json({ error: "Missing bearer token", code: "UNAUTHORIZED" });
   try {
     req.user = jwt.verify(token, env.jwtSecret, { algorithms: ["HS256"] });
     next();
-  } catch {
-    res.status(401).json({ error: "Invalid or expired token" });
+  } catch (err) {
+    // TOKEN_EXPIRED tells the client to call /api/auth/refresh; TOKEN_INVALID means log in again.
+    const expired = err.name === "TokenExpiredError";
+    res.status(401).json({ error: expired ? "Access token expired" : "Invalid token", code: expired ? "TOKEN_EXPIRED" : "TOKEN_INVALID" });
   }
 }
 
@@ -24,6 +26,6 @@ function requireAuth(req, res, next) {
 const requireRole =
   (...roles) =>
   (req, res, next) =>
-    roles.includes(req.user?.role) ? next() : res.status(403).json({ error: "Forbidden" });
+    roles.includes(req.user?.role) ? next() : res.status(403).json({ error: "Forbidden", code: "FORBIDDEN" });
 
 module.exports = { signToken, requireAuth, requireRole };

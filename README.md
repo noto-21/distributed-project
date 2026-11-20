@@ -59,7 +59,6 @@ flowchart TB
 
 ### Planned (designed, not built yet)
 
-* Holding a requested copy for the patron who asked (today anyone at the home branch can check it out once it arrives)
 * Google sign-up choosing a home branch other than the one whose URL started it
 * Physical vs. digital media (digital titles borrowable remotely without a transfer)
 * Recommendations service
@@ -68,24 +67,32 @@ flowchart TB
 
 ## 4. API
 
+> **Frontend team:** the full contract (request and response shapes, error codes, session handling) is in **[docs/api.md](docs/api.md)**.
+
 All public routes go through the gateway as `http://localhost:8090/<branch>/...`, e.g. `/oshawa/api/circulation/books/0262033844`.
 
 | Method & path | Auth | Purpose |
 | :--- | :--- | :--- |
 | `GET /healthz` | – | Readiness: 200 when this replica's DB is connected, else 503 |
 | `POST /api/auth/register` | – | `{ email, password, name, homeBranch }` → `{ token, user, homeBranch }`. Works at any branch; the account is created at `homeBranch`. 409 `EMAIL_TAKEN`, 503 `HOME_BRANCH_OFFLINE`. |
-| `POST /api/auth/login` | – | `{ email, password }` → `{ token, user, homeBranch }`, at any branch |
+| `POST /api/auth/login` | – | `{ email, password }` → `{ token, refreshToken, user, homeBranch }`, at any branch |
+| `POST /api/auth/refresh` | – | `{ refreshToken }` → a new pair (rotated; reusing an old token revokes all sessions) |
+| `POST /api/auth/logout` | – | `{ refreshToken }` → `204` |
 | `GET /api/auth/me` | JWT | Current user (read from their home branch) |
 | `GET /api/auth/google` | – | Start Google sign-in, which ends at `CLIENT_URL/auth/callback#token=…`. A new Google user's home is the branch in the URL. |
 | `GET /api/circulation/books/:isbn10` | – | Federated search: 200 with `foundAt`, or 404. Includes `offline` and `warning` when peers are down. |
 | `POST /api/circulation/requests` | JWT (at your home branch) | `{ isbn10 }`: bring a copy here from whichever branch has it. → `TRANSFERRED` / `AVAILABLE_HERE`; 404 / 409 otherwise; 400 `NOT_HOME_BRANCH` |
 | `POST /api/circulation/checkout` | JWT | `{ isbn10 }`: borrow a copy held here. 409 `BOOK_UNAVAILABLE`, 404 `BOOK_NOT_FOUND`. |
 | `POST /api/circulation/return` | JWT | `{ isbn10 }`: return a copy you borrowed here. `routedTo` names its origin branch if it was sent home. 409 `NOT_BORROWED_BY_YOU`. |
-| `GET /api/circulation/loans/me` | JWT | Your loans at this branch, newest first |
+| `GET /api/circulation/loans/me` | JWT | Your loans at this branch, newest first, with `dueAt` and `overdue` |
+| `GET /api/circulation/holds/me` | JWT | Copies on hold for you at this branch |
+| `GET /api/circulation/loans/overdue` | JWT, librarian | Overdue loans at this branch |
 | `POST /api/circulation/transfers` | JWT, librarian | `{ isbn10, targetBranch }`: push a copy from this branch |
 | `/internal/health`, `/internal/books/:isbn10`, `/internal/transfers/{receive,send,:sagaId}`, `/internal/users{,/exists,/verify,/:id}` | `x-internal-secret` | Peer-only; blocked at the gateway |
 
-Errors are JSON: `{ "error": "...", "code": "..." }`.
+Errors are JSON: `{ "error": "...", "code": "..." }`. Access tokens last 15 min; on `401 TOKEN_EXPIRED`, call `/refresh`.
+
+**Security:** CORS allows only `CLIENT_URL` / `CORS_ORIGINS`, strict security headers are set, and register/login/refresh are rate-limited per IP (`429 RATE_LIMITED`).
 
 ---
 
@@ -134,9 +141,16 @@ MONGO_URI_OSHAWA=mongodb+srv://...
 MONGO_URI_WHITBY=mongodb+srv://...
 
 JWT_SECRET=long-random-string        # required when NODE_ENV=production
-JWT_EXPIRES_IN=1h
 INTERNAL_API_SECRET=another-random-string
 CLIENT_URL=http://localhost:5173
+
+# Optional (defaults shown)
+# JWT_EXPIRES_IN=15m        access token lifetime; refresh tokens keep users signed in
+# REFRESH_TOKEN_DAYS=7
+# CORS_ORIGINS=http://localhost:5173   comma-separated browser origins allowed to call the API
+# AUTH_RATE_LIMIT=10        login/register attempts per IP per 15 min
+# HOLD_DAYS=3               how long a requested copy waits for its requester
+# LOAN_DAYS=14
 
 # Optional: Google login returns 501 without these
 GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
@@ -193,5 +207,31 @@ Run from `server/`:
 | `npm run test:db` | Concurrency (10 parallel checkouts, checkout vs. transfer race); requests to home branch; checkout/return/loans/custody order across lagging replicas; returns routed home; **failure demos**: target dies mid-transfer, source crashes at each saga step and recovery repairs it | a real MongoDB (`MONGO_URI`, or `MONGO_URI_OSHAWA` from `.env`); writes and deletes `TEST-CC-*` / `TEST-CR-*` rows. **Runs in CI** (throwaway `mongo:7`). |
 | `npm run test:trans` | Transfer saga: commit, rollback on timeout, double-transfer, idempotent receive | Atlas (oshawa); writes and deletes `TEST-*` rows |
 | `npm run test:lb` | NGINX load balancing and replica failover | the Docker stack running |
+
+### Live demo
+
+With the stack running (`docker compose up -d`), run this from `server/`:
+
+```bash
+npm run demo
+```
+
+It walks through the whole story on the real stack:
+- signup at one branch landing at another, and login anywhere
+- federated search, then a request that moves a copy and holds it for you
+- a rival patron who can't take the hold
+- checkout and a return that routes the copy home, with its Lamport-ordered custody trail
+- refresh-token rotation and reuse detection
+- **whitby going down** mid-service and coming back
+- every **saga crash scenario** being repaired
+
+Options:
+- `-- --step` pauses before each act, for presenting.
+- `--skip-failure` and `--skip-recovery` shorten the run.
+- `--isbn <isbn>` picks the book.
+- `--rate-limit` also shows brute-force blocking. It locks logins from your IP for 15 min, so it's opt-in.
+- `--keep` keeps the demo accounts.
+
+Without `--keep`, the demo deletes its accounts at the end.
 
 Add `--verbose` (e.g. `npx jest tests/failover.test.js --verbose`) to see each test as it runs.

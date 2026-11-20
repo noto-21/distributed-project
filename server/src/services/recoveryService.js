@@ -10,7 +10,6 @@ const config = require("../config/env");
 const { callPeer } = require("./peerClient");
 
 const STALE_MS = 30_000; // far longer than PEER_TIMEOUT_MS, so a live saga is never touched
-const SWEEP_EVERY_MS = 60_000;
 
 async function settle(log, status, reason) {
   log.status = status;
@@ -65,21 +64,4 @@ async function sweep({ olderThanMs = STALE_MS } = {}) {
   return report;
 }
 
-let timer = null;
-function start() {
-  if (timer) return;
-  const run = () => sweep().then((r) => {
-    const n = r.committed.length + r.rolledBack.length + r.unlocked.length;
-    if (n || r.pending.length) console.log(`[${config.branchId}] saga recovery`, r);
-  }).catch((err) => console.error(`[${config.branchId}] saga recovery failed:`, err.message));
-  run();
-  timer = setInterval(run, SWEEP_EVERY_MS);
-  timer.unref();
-}
-
-function stop() {
-  clearInterval(timer);
-  timer = null;
-}
-
-module.exports = { sweep, start, stop };
+module.exports = { sweep };
