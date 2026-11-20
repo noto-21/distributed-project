@@ -11,7 +11,6 @@ const librarySchema = new mongoose.Schema(
     thumbnail: { type: String, trim: true },
     description: { type: String, trim: true },
     average_rating: { type: Number, min: 0, max: 5, default: 0 },
-    num_pages: { type: Number, min: 0 },
     ratings_count: { type: Number, min: 0, default: 0 },
     currentBranch: { type: String, enum: validBranches, required: true },
     status: {

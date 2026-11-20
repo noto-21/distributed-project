@@ -36,11 +36,15 @@ const importCsv = async (filePath) => {
           thumbnail: row.thumbnail,
           description: row.description,
           average_rating: Number(row.average_rating),
-          num_pages: Number(row.num_pages),
           ratings_count: Number(row.ratings_count),
           currentBranch: env.branchId, // Whatever branch we're currently on (might be redundant)
           status: "AVAILABLE",
           activeTransferId: null,
+          borrowedBy: null,
+          heldFor: null,
+          holdExpiresAt: null,
+          originBranch: env.branchId,
+          custodyHistory: [],
         });
       })
       .on("end", async () => {
