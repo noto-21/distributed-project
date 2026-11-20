@@ -1,14 +1,15 @@
-// Router that sets up a POST API endpoint at /transfers to handle book transfers
+// Public circulation API: /<branch>/api/circulation/... through NGINX
 const express = require("express");
 const circulationController = require("../controllers/circulationController");
-const { requireAuth } = require("../middlewares/auth");
+const { requireAuth, requireRole } = require("../middlewares/auth");
 
 const router = express.Router();
 
-// Remove requireAuth temporarily if you wanna test curl without a JWT token first
-//router.post("/transfers", requireAuth, circulationController.transferBook);
-router.post("/transfers", circulationController.transferBook);
 router.get("/books/:isbn10", circulationController.findBook);
+router.post("/requests", requireAuth, circulationController.requestTransfer); // patron: bring a copy to my home branch
 router.post("/checkout", requireAuth, circulationController.checkout);
+router.post("/return", requireAuth, circulationController.returnBook);
+router.get("/loans/me", requireAuth, circulationController.myLoans);
+router.post("/transfers", requireAuth, requireRole("librarian"), circulationController.transferBook); // librarian push
 
 module.exports = router;

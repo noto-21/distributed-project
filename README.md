@@ -49,14 +49,18 @@ flowchart TB
 | **Federated search** (`services/catalogSearch.js`) | Local first. On a miss, the branch sends `GET /internal/books/:isbn10` to every healthy peer in parallel (`Promise.allSettled`, `PEER_TIMEOUT_MS` = 3 s). The response lists `foundAt` (which branches have it) and `offline`. |
 | **Failover** | `discoveryService` heartbeats every peer (`DISCOVERY_INTERVAL_MS` = 5 s) and marks a peer unhealthy after 3 failed probes. Search then skips it instead of waiting out the timeout, and adds a `warning` naming unreachable branches. One healthy probe brings it back. |
 | **Inter-library transfer saga** (`services/transferSaga.js`) | 1) lock the copy locally (`status: IN_TRANSIT`, `activeTransferId`), 2) `POST /internal/transfers/receive` to the target, 3) delete locally and log `COMMITTED`. If step 2 fails or times out, a compensating step unlocks the copy (`ROLLED_BACK`). The receiver is idempotent by `sagaId`, so retries never duplicate a book. |
-| **Concurrency control** | Every copy is one `Library` document. Checkout and the transfer lock are single atomic `findOneAndUpdate`s that only match `status: AVAILABLE, activeTransferId: null`, so of N simultaneous requests exactly one wins and the rest get `409`. |
-| **Lamport logical clocks** (`utils/lamportClock.js`) | Branches may have skewed wall clocks (different timezones), so cross-branch ordering uses Lamport time only. Every peer request and response carries `x-lamport-timestamp`, and the receiver applies $C = \max(C_{\text{local}}, C_{\text{incoming}}) + 1$. |
+| **Request to home branch** (`POST /api/circulation/requests`) | A patron asks *their home branch* for a book. It searches the network, then asks a branch that has it (`POST /internal/transfers/send`) to run the transfer saga towards home. If that branch loses its copy to someone else (409), the next holder is asked. |
+| **Saga crash recovery** (`services/recoveryService.js`) | On boot and every 60 s, the source branch looks for transfers a crash left half-done (`RESERVED`/`COMPENSATING` for 30 s+, or a lock with no log). It asks the target (`GET /internal/transfers/:sagaId`): if the target committed, the source finishes (deletes its copy); if the target never got it, the source unlocks the copy. If the target is unreachable, nothing is decided until the next sweep, so a copy is never duplicated or lost. |
+| **Concurrency control** | Every copy is one `Library` document. Checkout and the transfer lock are single atomic `findOneAndUpdate`s that only match `status: AVAILABLE, activeTransferId: null`, so of N simultaneous requests exactly one wins and the rest get `409`. Returns are atomic too, and only the borrower can return. |
+| **Loans & custody** (`models/Loan.js`, `Library.custodyHistory`) | Each checkout creates a `Loan` at that branch. Every copy carries a `custodyHistory` (`TRANSFER_IN`, `CHECKOUT`, `RETURN`, each with its branch and Lamport time) that travels with it between branches, and an `originBranch`. A copy returned away from its origin is sent home automatically; if home is down, it stays available where it was returned. |
+| **Home branch accounts** | A user exists only in their home branch's DB. Signup at any branch takes a `homeBranch` and creates the account there (only a bcrypt hash crosses branches), after checking no branch already has that email. Login works at any branch: if the user isn't local, the branches are asked and the home branch verifies the password. The response's `homeBranch` tells the client which `/<branch>/` to use. |
+| **Lamport logical clocks** (`utils/lamportClock.js`) | Branches may have skewed wall clocks (different timezones), so cross-branch ordering uses Lamport time only. Every peer request and response carries `x-lamport-timestamp`, and the receiver applies $C = \max(C_{\text{local}}, C_{\text{incoming}}) + 1$. Each branch runs 2 replicas with their own clocks, so before stamping a copy's next custody event a replica also syncs past that copy's latest stamp. That keeps every copy's trail in order. |
 | **Replication & high availability** | Each Atlas cluster is a 3-node replica set. The driver fails over to a new primary on its own, and `retryWrites=true&w=majority` retries a write once and confirms it on a majority. Each branch also runs 2 app replicas. Docker health-checks them via `GET /healthz` (503 without a DB), and NGINX retries the other replica on an error, timeout, 502 or 503 (never on POST). |
 
 ### Planned (designed, not built yet)
 
-* `Loan` documents with `custodyHistory`, so returned books route back to their origin branch
-* Return / check-in endpoint (today a checked-out copy stays `BORROWED`)
+* Holding a requested copy for the patron who asked (today anyone at the home branch can check it out once it arrives)
+* Google sign-up choosing a home branch other than the one whose URL started it
 * Physical vs. digital media (digital titles borrowable remotely without a transfer)
 * Recommendations service
 
@@ -69,14 +73,17 @@ All public routes go through the gateway as `http://localhost:8090/<branch>/...`
 | Method & path | Auth | Purpose |
 | :--- | :--- | :--- |
 | `GET /healthz` | – | Readiness: 200 when this replica's DB is connected, else 503 |
-| `POST /api/auth/register` | – | `{ email, password, name }` → `{ token, user }`. New users are patrons at the branch that handled the request. |
-| `POST /api/auth/login` | – | `{ email, password }` → `{ token, user }` |
-| `GET /api/auth/me` | JWT | Current user |
-| `GET /api/auth/google` | – | Start Google sign-in, which ends at `CLIENT_URL/auth/callback#token=…` |
+| `POST /api/auth/register` | – | `{ email, password, name, homeBranch }` → `{ token, user, homeBranch }`. Works at any branch; the account is created at `homeBranch`. 409 `EMAIL_TAKEN`, 503 `HOME_BRANCH_OFFLINE`. |
+| `POST /api/auth/login` | – | `{ email, password }` → `{ token, user, homeBranch }`, at any branch |
+| `GET /api/auth/me` | JWT | Current user (read from their home branch) |
+| `GET /api/auth/google` | – | Start Google sign-in, which ends at `CLIENT_URL/auth/callback#token=…`. A new Google user's home is the branch in the URL. |
 | `GET /api/circulation/books/:isbn10` | – | Federated search: 200 with `foundAt`, or 404. Includes `offline` and `warning` when peers are down. |
+| `POST /api/circulation/requests` | JWT (at your home branch) | `{ isbn10 }`: bring a copy here from whichever branch has it. → `TRANSFERRED` / `AVAILABLE_HERE`; 404 / 409 otherwise; 400 `NOT_HOME_BRANCH` |
 | `POST /api/circulation/checkout` | JWT | `{ isbn10 }`: borrow a copy held here. 409 `BOOK_UNAVAILABLE`, 404 `BOOK_NOT_FOUND`. |
-| `POST /api/circulation/transfers` | – (temporarily) | `{ isbn10, targetBranch }`: run the transfer saga |
-| `GET /internal/health`, `GET /internal/books/:isbn10`, `POST /internal/transfers/receive` | `x-internal-secret` | Peer-only; blocked at the gateway |
+| `POST /api/circulation/return` | JWT | `{ isbn10 }`: return a copy you borrowed here. `routedTo` names its origin branch if it was sent home. 409 `NOT_BORROWED_BY_YOU`. |
+| `GET /api/circulation/loans/me` | JWT | Your loans at this branch, newest first |
+| `POST /api/circulation/transfers` | JWT, librarian | `{ isbn10, targetBranch }`: push a copy from this branch |
+| `/internal/health`, `/internal/books/:isbn10`, `/internal/transfers/{receive,send,:sagaId}`, `/internal/users{,/exists,/verify,/:id}` | `x-internal-secret` | Peer-only; blocked at the gateway |
 
 Errors are JSON: `{ "error": "...", "code": "..." }`.
 
@@ -96,9 +103,9 @@ Final_Project/
     ├── Dockerfile
     ├── src/
     │   ├── config/            # env.js (validated config), checkConnections.js
-    │   ├── models/            # User, Library (one doc per copy), TransferLog
+    │   ├── models/            # User, Library (one doc per copy), Loan, TransferLog
     │   ├── controllers/       # auth, circulation, internal (peer) handlers
-    │   ├── services/          # catalogSearch, discoveryService, transferSaga
+    │   ├── services/          # catalogSearch, discoveryService, transferSaga, recoveryService, peerClient, userService
     │   ├── middlewares/       # JWT requireAuth / requireRole
     │   ├── routes/            # /api/auth, /api/circulation, /internal
     │   ├── utils/             # lamportClock, AppError
@@ -138,7 +145,7 @@ GOOGLE_CLIENT_SECRET=xxxx
 
 Generate a secret with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
-> Under Docker, `docker-compose.yml` sets `JWT_SECRET` itself, so the `.env` value only applies to local (non-Docker) runs.
+> Under Docker, `JWT_SECRET` and `INTERNAL_API_SECRET` come from this `.env` too; without them, dev defaults are used.
 
 For Google login, register one redirect URI per branch in Google Cloud Console:
 `http://localhost:8090/{ajax,oshawa,whitby}/api/auth/google/callback`.
@@ -171,7 +178,7 @@ $env:BRANCH_ID="ajax"; npm run seed ./path/to/ajax_items.csv
 
 ### Troubleshooting
 
-* **502 from the gateway / `Could not connect to any servers in your MongoDB Atlas cluster`:** your IP isn't on the cluster's Network Access list, or the cluster is paused. Fix it in Atlas, then run `docker compose restart`. nodemon doesn't retry on its own.
+* **502 from the gateway / `MongoDB connect failed (attempt N)` in the logs:** your IP isn't on the cluster's Network Access list, or the cluster is paused. Fix it in Atlas; the branch keeps retrying every 5 s and comes up by itself (`/healthz` returns 503 until then).
 * **Gateway won't start:** something else is using port 8090.
 
 ---
@@ -182,8 +189,8 @@ Run from `server/`:
 
 | Command | What it covers | Needs |
 | :--- | :--- | :--- |
-| `npm test` | Auth/JWT/OAuth, env validation, federated search, failover (dead or unhealthy peers, warnings, heartbeats) | nothing; DB mocked, peers are local HTTP servers. **Runs in CI.** |
-| `npm run test:db` | Concurrency: 10 parallel checkouts of the last copy, checkout vs. transfer race, in-transit/borrowed guards | a real MongoDB (`MONGO_URI`, or `MONGO_URI_OSHAWA` from `.env`); writes and deletes `TEST-CC-*` rows |
+| `npm test` | Auth/JWT/OAuth, home-branch signup and login across branches, env validation, federated search, failover (dead or unhealthy peers, warnings, heartbeats), DB retry at boot | nothing; DB mocked, peers are local HTTP servers. **Runs in CI.** |
+| `npm run test:db` | Concurrency (10 parallel checkouts, checkout vs. transfer race); requests to home branch; checkout/return/loans/custody order across lagging replicas; returns routed home; **failure demos**: target dies mid-transfer, source crashes at each saga step and recovery repairs it | a real MongoDB (`MONGO_URI`, or `MONGO_URI_OSHAWA` from `.env`); writes and deletes `TEST-CC-*` / `TEST-CR-*` rows. **Runs in CI** (throwaway `mongo:7`). |
 | `npm run test:trans` | Transfer saga: commit, rollback on timeout, double-transfer, idempotent receive | Atlas (oshawa); writes and deletes `TEST-*` rows |
 | `npm run test:lb` | NGINX load balancing and replica failover | the Docker stack running |
 
