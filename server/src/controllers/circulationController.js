@@ -243,3 +243,17 @@ exports.findBook = async (req, res, next) => {
     next(err);
   }
 };
+
+exports.getBranchCatalog = async (req, res, next) => {
+  try {
+    const result = await catalogSearch.getAllEntriesByBranch(req.params.branch);
+    res.status(200).json({
+      branch: result.branch,
+      source: result.source,
+      count: result.books.length,
+      books: result.books,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
