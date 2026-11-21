@@ -18,4 +18,7 @@ router.get("/holds/me", ...home, circulationController.myHolds);
 router.get("/loans/overdue", ...home, requireRole("librarian"), circulationController.overdueLoans); // librarian's own branch
 router.post("/transfers", ...home, requireRole("librarian"), circulationController.transferBook); // librarian push
 
+// validate JWT signature and attaches req.user, sends to circulationController
+router.get("/branches/:branch/books", requireAuth, circulationController.getBranchCatalog);
+
 module.exports = router;

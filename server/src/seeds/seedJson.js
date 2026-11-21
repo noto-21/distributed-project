@@ -7,6 +7,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const csv = require('csv-parser');
 const env = require('../config/env.js'); // Gives access to branch names (oshawa, ajax, whitby)
+const crypto = require('node:crypto');
+
+const fakeObjectId = () => crypto.randomBytes(12).toString('hex');
+
+const parseAuthors = (raw) => {
+  if (!raw || !raw.trim()) return [];
+  return raw.split(/[;|]/).map((a) => a.trim()).filter(Boolean);
+};
 
 const parseCsvToObjects = (filePath) => {
   return new Promise((resolve, reject) => {
@@ -22,13 +30,14 @@ const parseCsvToObjects = (filePath) => {
       .pipe(csv())
       .on('data', (row) => {
         records.push({
-          isbn10: row.isbn10,
-          title: row.title,
-          subtitle: row.subtitle,
-          author: row.author,
-          categories: row.categories,
-          thumbnail: row.thumbnail,
-          description: row.description,
+          _id: fakeObjectId(),
+          isbn10: row.isbn10?.trim() || '',
+          title: row.title?.trim() || '',
+          subtitle: row.subtitle?.trim() || undefined,
+          author: parseAuthors(row.author),
+          categories: row.categories?.trim() || undefined,
+          thumbnail: row.thumbnail?.trim() || undefined,
+          description: row.description?.trim() || undefined,
           average_rating: Number(row.average_rating) || 0,
           ratings_count: Number(row.ratings_count) || 0,
           currentBranch: env.branchId,
@@ -39,6 +48,9 @@ const parseCsvToObjects = (filePath) => {
           holdExpiresAt: null,
           originBranch: env.branchId,
           custodyHistory: [],
+          createdAt: "2026-11-21T18:15:00.000Z",
+          updatedAt: "2026-11-21T18:15:00.000Z",
+          __v: 0,
         });
       })
       .on('end', () => {
@@ -69,7 +81,14 @@ if (require.main === module) {
 
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
-      fs.writeFileSync(outputPath, JSON.stringify(objects, null, 2), 'utf8');
+      const payload = {
+        branch: env.branchId,
+        source: 'local',
+        count: objects.length,
+        objects,
+      };
+
+      fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf8');
       
       console.log(`Successfully saved ${objects.length} objects to ${outputPath}`);
     })

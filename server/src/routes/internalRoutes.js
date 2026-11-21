@@ -44,4 +44,6 @@ router.get("/users/:id", internalController.getUser);
 router.post("/auth/refresh", internalController.refreshToken);
 router.post("/auth/logout", internalController.logoutToken);
 
+router.get("/books", internalController.listBooks);
+
 module.exports = router;

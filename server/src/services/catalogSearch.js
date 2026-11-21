@@ -3,7 +3,9 @@
 const Library = require("../models/Library");
 const lamportClock = require("../utils/lamportClock");
 const discoveryService = require("./discoveryService");
+const AppError = require("../utils/AppError");
 const config = require("../config/env");
+const { callPeer } = require("./peerClient");
 
 async function askPeer(peer, isbn10) {
   const controller = new AbortController();
@@ -48,4 +50,28 @@ async function findBook(isbn10) {
   return result;
 }
 
-module.exports = { findBook };
+// Takes the provided targetBranch and returns all books
+async function getAllEntriesByBranch(targetBranch) {
+  const normalized = typeof targetBranch === "string" ? targetBranch.toLowerCase().trim() : "";
+
+  // Not a branch
+  if (!normalized || !config.validBranches.includes(normalized)) {
+    throw AppError.badRequest(`Invalid branch: ${targetBranch}`);
+  }
+
+  // We're on the same branch, query locally
+  if (normalized === discoveryService.selfBranch.toLowerCase()) {
+    const books = await Library.find({ currentBranch: discoveryService.selfBranch }).lean();
+    return { branch: discoveryService.selfBranch, source: "local", books };
+  }
+
+  // Not my branch calls peerClient 
+  const { status, body } = await callPeer(normalized, "GET", "/books");
+  if (status !== 200) { // throws 503 AppError if peer is offline/unreachable/times out
+    throw new AppError(body?.error || `Failed to fetch catalog from ${targetBranch}`, status);
+  }
+
+  return { branch: normalized, source: "peer", books: body.books || [] };
+}
+
+module.exports = { findBook, getAllEntriesByBranch };

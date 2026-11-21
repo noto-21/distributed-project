@@ -116,6 +116,18 @@ exports.lookupBook = async (req, res, next) => {
   }
 };
 
+// Peer asks "what books do you have?": 200 with all copies currently at this branch.
+exports.listBooks = async (req, res, next) => {
+  try {
+    receiveEvent(req);
+    const books = await Library.find({ currentBranch: discoveryService.selfBranch }).lean();
+    stamp(res);
+    res.status(200).json({ branch: discoveryService.selfBranch, books });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // ---- Users (each user lives only in their home branch's DB) ----
 
 // GET /users/exists?email=
