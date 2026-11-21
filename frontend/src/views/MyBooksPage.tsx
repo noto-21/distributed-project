@@ -149,8 +149,8 @@ export default function MyBooksPage() {
       title: "Pride and Prejudice",
       author: "Jane Austen",
       genre: "Classic fiction",
-      branch: homeBranch,
-      status: "ready",
+      branch: "homebranch",
+      status: "borrowed",
       borrowedAt: null,
       dueAt: null,
     },
@@ -173,7 +173,8 @@ export default function MyBooksPage() {
     (book) => book.status === "borrowed"
   ).length;
 
-  // Change a ready book into a borrowed book.
+
+  // Borrow a book only when it is ready at the home library.
   function checkoutBook(bookId: number) {
     const checkoutTime = Date.now();
     setNow(checkoutTime);
@@ -188,8 +189,12 @@ export default function MyBooksPage() {
       }
 
       return currentBooks.map((book): Book => {
-        // Only the selected ready book can change.
-        if (book.id === bookId && book.status === "ready") {
+        // Check the selected book's status and location.
+        if (
+          book.id === bookId &&
+          book.status === "ready" &&
+          book.branch.toLowerCase() === homeBranch.toLowerCase()
+        ) {
           return {
             ...book,
             status: "borrowed",
@@ -198,6 +203,7 @@ export default function MyBooksPage() {
           };
         }
 
+        // Leave every other book unchanged.
         return book;
       });
     });
@@ -315,6 +321,10 @@ export default function MyBooksPage() {
                       ? getLoanTiming(book.borrowedAt, book.dueAt, now)
                       : null;
 
+                  // Compare library names without worrying about capital letters.
+                  const atHome =
+                    book.branch.toLowerCase() === homeBranch.toLowerCase();
+
                   return (
                     <article
                       key={book.id}
@@ -396,6 +406,8 @@ export default function MyBooksPage() {
                       {/* Book status and available actions. */}
                       <div className="space-y-3">
 
+                      
+
                       {/* Enable this when the book detail screen is available. */}
                       <button
                         type="button"
@@ -405,25 +417,43 @@ export default function MyBooksPage() {
                         View Details
                       </button>
 
-                        <p
-                          className={`text-sm font-bold ${
-                            timing?.overdue
-                              ? "text-red-700"
-                              : timing?.dueSoon
-                                ? "text-amber-700"
-                                : "text-gray-800"
-                          }`}
-                        >
-                          {timing?.overdue
-                            ? "⚑ Overdue"
+                      {/* Choose a label and colour based on the book's current state. */}
+                      <p
+                        role="status"
+                        className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-bold ${
+                          timing?.overdue
+                            ? "bg-red-100 text-red-700"
                             : timing?.dueSoon
-                              ? "Due soon"
+                              ? "bg-amber-100 text-amber-700"
                               : book.status === "borrowed"
-                                ? "Checked out"
+                                ? "bg-gray-100 text-gray-700"
                                 : book.status === "transferring"
-                                  ? "Transferring"
-                                  : "Ready to checkout"}
-                        </p>
+                                  ? "bg-blue-100 text-blue-700"
+                                  : atHome
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-amber-100 text-amber-800"
+                        }`}
+                      >
+                        {/* Show a spinning circle only while the book is transferring. */}
+                        {book.status === "transferring" && (
+                          <span
+                            aria-hidden="true"
+                            className="h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent"
+                          />
+                        )}
+
+                        {timing?.overdue
+                          ? "⚑ Overdue"
+                          : timing?.dueSoon
+                            ? "Due soon"
+                            : book.status === "borrowed"
+                              ? "Checked out"
+                              : book.status === "transferring"
+                                ? `Transferring to ${homeBranch}…`
+                                : atHome
+                                  ? "Available locally"
+                                  : `Transfer required from ${book.branch}`}
+                      </p>
 
                         {book.status === "borrowed" ? (
                           <div className="flex flex-wrap gap-2">
@@ -445,17 +475,18 @@ export default function MyBooksPage() {
                           </div>
                         ) : (
                           <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => checkoutBook(book.id)}
-                              disabled={
-                                book.status !== "ready" ||
-                                borrowedCount >= MAX_BOOKS
-                              }
-                              className="rounded-md bg-[#777170] px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              Checkout
-                            </button>
+                          <button
+                            type="button"
+                            onClick={() => checkoutBook(book.id)}
+                            disabled={
+                              book.status !== "ready" ||
+                              !atHome ||
+                              borrowedCount >= MAX_BOOKS
+                            }
+                            className="rounded-md bg-[#777170] px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Checkout
+                          </button>
 
                             <button
                               type="button"
