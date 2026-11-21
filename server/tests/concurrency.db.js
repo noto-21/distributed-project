@@ -91,7 +91,8 @@ test("checkout racing a transfer of the same copy: exactly one wins, and the DB 
       expect(tr.reason.statusCode).toBe(409);
       expect(book).toMatchObject({ status: "BORROWED", borrowedBy: "racer", activeTransferId: null });
     } else {
-      expect(co.value.status).toBe(409);
+      // 409 if the copy was still locked when checkout looked, 404 if it had already left for ajax.
+      expect([409, 404]).toContain(co.value.status);
       expect(book).toBeNull(); // moved to ajax
     }
   }

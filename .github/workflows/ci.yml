@@ -29,6 +29,7 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npm test
+      - run: npm run test:db   # real-DB tests (concurrency, circulation, crash recovery) against the mongo service
 
   docker:
     runs-on: ubuntu-latest

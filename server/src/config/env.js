@@ -51,8 +51,14 @@ function loadEnv(env = process.env) {
     mongoUri,
     peers: parsePeerUrls(env.PEER_URLS, branchId),
     jwtSecret: env.JWT_SECRET || "dev-secret-change-in-prod",
-    jwtExpiresIn: env.JWT_EXPIRES_IN || "1h",
+    jwtExpiresIn: env.JWT_EXPIRES_IN || "15m", // short: refresh tokens (refreshDays) keep users signed in
+    refreshDays: Number(env.REFRESH_TOKEN_DAYS) || 7,
     clientUrl: env.CLIENT_URL || "http://localhost:5173",
+    // Browser origins allowed to call the API (comma-separated). Defaults to the React dev server.
+    corsOrigins: (env.CORS_ORIGINS || env.CLIENT_URL || "http://localhost:5173").split(",").map((s) => s.trim()).filter(Boolean),
+    authRateLimit: Number(env.AUTH_RATE_LIMIT) || 10, // attempts per IP per 15 min on login/register/refresh
+    holdDays: Number(env.HOLD_DAYS) || 3, // a requested copy waits this long for its requester
+    loanDays: Number(env.LOAN_DAYS) || 14,
     // Optional: Google login returns 501 unless both are set.
     google:
       env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
@@ -65,6 +71,8 @@ function loadEnv(env = process.env) {
           }
         : null,
     peerTimeoutMs: Number(env.PEER_TIMEOUT_MS) || 3000,
+    // A request forwarded to the user's home branch may itself search peers and run a transfer.
+    forwardTimeoutMs: Number(env.FORWARD_TIMEOUT_MS) || 15000,
     discoveryIntervalMs: Number(env.DISCOVERY_INTERVAL_MS) || 5000,
 
     internalSecret: env.INTERNAL_API_SECRET || "dev-internal-secret-change-in-prod",

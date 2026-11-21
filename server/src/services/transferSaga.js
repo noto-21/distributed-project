@@ -61,7 +61,8 @@ async function callPeerBranch(targetBranch, path, payload, tick) {
   }
 }
 
-async function executeTransfer({ isbn10, targetBranch }) {
+// holdFor: userId of the patron who requested this copy; the target keeps it ON_HOLD for them.
+async function executeTransfer({ isbn10, targetBranch, holdFor }) {
   const sourceBranch = config.branchId;
   const normalizedTarget = targetBranch.toLowerCase();
 
@@ -120,9 +121,11 @@ async function executeTransfer({ isbn10, targetBranch }) {
       {
         sagaId,
         sourceBranch,
+        holdFor,
         bookData: {
           ...bookData,
           currentBranch: normalizedTarget,
+          originBranch: bookData.originBranch || sourceBranch, // copies seeded before originBranch existed
           status: "AVAILABLE",
         },
       },
