@@ -1,14 +1,28 @@
 import React, { useEffect, useState } from "react";
-import { branches, formats, lookupIsbn, searchCatalog } from "../api/catalog";
+import { branches, findEdition, formats, lookupIsbn, searchCatalog } from "../api/catalog";
 import type { Branch, Edition, Format } from "../api/catalog";
+import BookDetails from "./BookDetails";
 
 const historyKey = "durham-library-recent-searches";
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
 const action = "rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]";
 const field = "rounded-md border border-[#9ca8bd] bg-white px-3 py-2";
 
-function queryFromUrl() {
-  return new URLSearchParams(window.location.search).get("q")?.trim() ?? "";
+function readSearchLocation() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    query: params.get("q")?.trim() ?? "",
+    bookIsbn: params.get("book"),
+    liveBook: params.get("source") === "live",
+  };
+}
+
+function searchUrl(query: string, isbn?: string, live = false) {
+  const params = new URLSearchParams();
+  if (query) params.set("q", query);
+  if (isbn) params.set("book", isbn);
+  if (live) params.set("source", "live");
+  return params.size ? `/search?${params}` : "/search";
 }
 
 function readHistory(): string[] {
@@ -20,7 +34,7 @@ function readHistory(): string[] {
   }
 }
 
-function EditionCard({ book }: { book: Edition }) {
+function EditionCard({ book, query }: { book: Edition; query: string }) {
   const available = branches.filter(branch => book.holdings[branch] === "Available").length;
   return (
     <article className={panel}>
@@ -50,15 +64,18 @@ function EditionCard({ book }: { book: Edition }) {
           ))}
         </tbody>
       </table>
-      <details className="mt-2 border-t border-slate-200 pt-2 text-sm">
-        <summary className="cursor-pointer underline">View details</summary>
-        <p className="mt-2">ISBN {book.isbn}</p>
-      </details>
+      <a
+        href={searchUrl(query, book.isbn)}
+        aria-label={`View details for ${book.title}, ${book.edition}`}
+        className="mt-2 block border-t border-slate-200 pt-2 text-sm underline"
+      >
+        View details
+      </a>
     </article>
   );
 }
 
-function IsbnResults({ query }: { query: string }) {
+function IsbnResults({ query, showDetails = false }: { query: string; showDetails?: boolean }) {
   const [result, setResult] =
     useState<Awaited<ReturnType<typeof lookupIsbn>> | null>(null);
   const [error, setError] = useState("");
@@ -78,6 +95,33 @@ function IsbnResults({ query }: { query: string }) {
       ignore = true;
     };
   }, [query]);
+
+  const book = result?.foundAt[0]?.book;
+  if (showDetails && result && book) {
+    const holdings = branches.map(branch => {
+      const id = branch.toLowerCase();
+      let status = "No available copy";
+      if (result.foundAt.some(match => match.branch === id)) {
+        status = "Available";
+      } else if (result.offline.includes(id as Lowercase<Branch>)) {
+        status = "Branch unreachable";
+      } else if (result.source === "local") {
+        status = "Not checked";
+      }
+      return { branch, status };
+    });
+
+    return (
+      <BookDetails
+        isbn={book.isbn10}
+        title={book.title}
+        author={book.author.join(", ")}
+        description={book.description}
+        holdings={holdings}
+        warning={result.warning}
+      />
+    );
+  }
 
   return (
     <section className={`${panel} mt-5`} aria-labelledby="isbn-results">
@@ -103,13 +147,18 @@ function IsbnResults({ query }: { query: string }) {
               ))}
             </ul>
           )}
+          {!showDetails && book && (
+            <a href={searchUrl(query, result.isbn10, true)} className="mt-3 inline-block underline">
+              View details
+            </a>
+          )}
         </>
       )}
     </section>
   );
 }
 export default function SearchPage() {
-  const [query, setQuery] = useState(queryFromUrl);
+  const [{ query, bookIsbn, liveBook }, setLocation] = useState(readSearchLocation);
   const [draft, setDraft] = useState(query);
   const [history, setHistory] = useState(readHistory);
   const [selectedFormats, setSelectedFormats] = useState<Format[]>([]);
@@ -119,9 +168,9 @@ export default function SearchPage() {
 
   useEffect(() => {
     function restoreSearch() {
-      const restored = queryFromUrl();
-      setQuery(restored);
-      setDraft(restored);
+      const restored = readSearchLocation();
+      setLocation(restored);
+      setDraft(restored.query);
     }
     window.addEventListener("popstate", restoreSearch);
     return () => window.removeEventListener("popstate", restoreSearch);
@@ -130,8 +179,8 @@ export default function SearchPage() {
   function submit(value: string) {
     const next = value.trim();
     if (!next) return;
-    if (next !== query) window.history.pushState(null, "", `/search?${new URLSearchParams({ q: next })}`);
-    setQuery(next);
+    if (next !== query || bookIsbn) window.history.pushState(null, "", searchUrl(next));
+    setLocation({ query: next, bookIsbn: null, liveBook: false });
     setDraft(next);
     const recent = [next, ...history.filter(item => item.toLowerCase() !== next.toLowerCase())].slice(0, 8);
     setHistory(recent);
@@ -142,6 +191,7 @@ export default function SearchPage() {
     }
   }
   const isIsbnSearch = /^\d{9}[\dX]$/i.test(query.replace(/[\s-]/g, ""));
+  const selectedBook = bookIsbn && !liveBook ? findEdition(bookIsbn) : undefined;
   const selectedBranches = selectedLibraries.length ? selectedLibraries : branches;
 
   const results = query
@@ -167,10 +217,12 @@ export default function SearchPage() {
           </nav>
         </header>
         <main className="p-5 sm:p-7">
-          <div className="mb-5 flex flex-wrap justify-between gap-3">
-            <div><h1 className="text-3xl font-bold">Welcome, Username</h1><p>Find books across Ajax, Oshawa and Whitby.</p></div>
-            <div className={panel}><p className="text-xs uppercase">Your home branch</p><p className="font-bold">Oshawa</p></div>
-          </div>
+          {!bookIsbn && (
+              <div className="mb-5 flex flex-wrap justify-between gap-3">
+                <div><h1 className="text-3xl font-bold">Welcome, Username</h1><p>Find books across Ajax, Oshawa and Whitby.</p></div>
+                <div className={panel}><p className="text-xs uppercase">Your home branch</p><p className="font-bold">Oshawa</p></div>
+              </div>
+          )}
           <form role="search" onSubmit={event => { event.preventDefault(); submit(draft); }}>
             <label className="mb-1 block text-xl font-bold" htmlFor="catalog-query">Search the Catalog</label>
             <div className="flex flex-wrap gap-2">
@@ -179,97 +231,125 @@ export default function SearchPage() {
             </div>
           </form>
           <p className="mt-2 text-sm text-slate-700">Ajax Public Library · Oshawa Public Libraries · Whitby Public Library</p>
-          {isIsbnSearch ? (
-  <IsbnResults key={query} query={query} />
-) : query ? (
-            <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_15rem]">
-              <section aria-labelledby="results-heading">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 id="results-heading" className="text-xl font-bold">Search Results</h2>
-                  <select className={field} aria-label="Sort results" value={sort} onChange={event => setSort(event.target.value)}>
-                    <option value="relevance">Sort by relevance</option><option value="title">Sort by title</option>
-                  </select>
-                </div>
-                <p className="my-2 text-sm" role="status">{results.length} {results.length === 1 ? "match" : "matches"} for “{query}” · Sample catalog</p>
-                <div className="space-y-3">
-                  {results.length ? results.map(book => <EditionCard key={book.isbn} book={book} />) :
-                    <p className={panel}>No matching results. Try another title, author, or ISBN, or clear the filters.</p>}
-                                </div>
-              </section>
-
-              <aside className="space-y-3">
-                <section className={`${panel} space-y-3`}>
-                  <div className="flex justify-between">
-                    <h2 className="font-bold">Refine search</h2>
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => {
-                        setSelectedFormats([]);
-                        setSelectedLibraries([]);
-                        setAvailableOnly(false);
-                      }}
-                    >
-                      Reset
-                    </button>
-                  </div>
-
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={availableOnly}
-                      onChange={event => setAvailableOnly(event.currentTarget.checked)}
-                    />
-                    Available now
-                  </label>
-
-                  <fieldset className="space-y-1 border-t border-slate-200 pt-2">
-                    <legend className="pr-2 font-semibold">Library</legend>
-                    {branches.map(name => (
-                      <label key={name} className="flex cursor-pointer items-center gap-2 py-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedLibraries.includes(name)}
-                          onChange={event => {
-                            const checked = event.currentTarget.checked;
-                            setSelectedLibraries(current =>
-                              checked ? [...current, name] : current.filter(item => item !== name),
-                            );
-                          }}
-                        />
-                        {name}
-                      </label>
-                    ))}
-                  </fieldset>
-
-                  <fieldset className="space-y-1 border-t border-slate-200 pt-2">
-                    <legend className="pr-2 font-semibold">Format</legend>
-                    {formats.map(name => (
-                      <label key={name} className="flex cursor-pointer items-center gap-2 py-1">
-                        <input
-                          type="checkbox"
-                          checked={selectedFormats.includes(name)}
-                          onChange={event => {
-                            const checked = event.currentTarget.checked;
-                            setSelectedFormats(current =>
-                              checked ? [...current, name] : current.filter(item => item !== name),
-                            );
-                          }}
-                        />
-                        {name}
-                      </label>
-                    ))}
-                  </fieldset>
+          {bookIsbn ? (
+            <>
+              <a href={searchUrl(query)} className="mt-4 inline-block text-sm font-semibold underline">
+                {query ? "Back to search results" : "Back to search"}
+              </a>
+              {liveBook ? (
+                <IsbnResults key={bookIsbn} query={bookIsbn} showDetails />
+              ) : selectedBook ? (
+                <BookDetails
+                  isbn={selectedBook.isbn}
+                  title={selectedBook.title}
+                  author={selectedBook.author}
+                  edition={selectedBook.edition}
+                  format={selectedBook.format}
+                  color={selectedBook.color}
+                  description={selectedBook.description}
+                  holdings={branches.map(branch => ({ branch, status: selectedBook.holdings[branch] }))}
+                />
+              ) : (
+                <section className={`${panel} mt-3`}>
+                  <h1 className="text-xl font-bold">Book details unavailable</h1>
+                  <p>Return to the catalog to find another edition.</p>
                 </section>
-                <section className={panel}><h2 className="font-bold">My Borrowing</h2><a href="/#my-books" className="underline">View My Books</a></section>
-              </aside>
-            </div>
+              )}
+            </>
           ) : (
-            <section className={`${panel} mt-5`}>
-              <h2 className="mb-2 text-xl font-bold">Recent Searches</h2>
-              {history.length ? <ul className="flex flex-wrap gap-2">{history.map(item => <li key={item}><button type="button" className={field} onClick={() => submit(item)}>{item}</button></li>)}</ul>
-                : <p className="text-slate-600">Your recent searches will appear here.</p>}
-            </section>
+            <>
+              {isIsbnSearch ? (
+                <IsbnResults key={query} query={query} />
+              ) : query ? (
+                <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_15rem]">
+                  <section aria-labelledby="results-heading">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h2 id="results-heading" className="text-xl font-bold">Search Results</h2>
+                      <select className={field} aria-label="Sort results" value={sort} onChange={event => setSort(event.target.value)}>
+                        <option value="relevance">Sort by relevance</option><option value="title">Sort by title</option>
+                      </select>
+                    </div>
+                    <p className="my-2 text-sm" role="status">{results.length} {results.length === 1 ? "match" : "matches"} for “{query}” · Sample catalog</p>
+                    <div className="space-y-3">
+                      {results.length ? results.map(book => <EditionCard key={book.isbn} book={book} query={query} />) :
+                        <p className={panel}>No matching results. Try another title, author, or ISBN, or clear the filters.</p>}
+                    </div>
+                  </section>
+                  <aside className="space-y-3">
+                    <section className={`${panel} space-y-3`}>
+                      <div className="flex justify-between">
+                        <h2 className="font-bold">Refine search</h2>
+                        <button
+                          type="button"
+                          className="underline"
+                          onClick={() => {
+                            setSelectedFormats([]);
+                            setSelectedLibraries([]);
+                            setAvailableOnly(false);
+                          }}
+                        >
+                          Reset
+                        </button>
+                      </div>
+
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={availableOnly}
+                          onChange={event => setAvailableOnly(event.currentTarget.checked)}
+                        />
+                        Available now
+                      </label>
+
+                      <fieldset className="space-y-1 border-t border-slate-200 pt-2">
+                        <legend className="pr-2 font-semibold">Library</legend>
+                        {branches.map(name => (
+                          <label key={name} className="flex cursor-pointer items-center gap-2 py-1">
+                            <input
+                              type="checkbox"
+                              checked={selectedLibraries.includes(name)}
+                              onChange={event => {
+                                const checked = event.currentTarget.checked;
+                                setSelectedLibraries(current =>
+                                  checked ? [...current, name] : current.filter(item => item !== name),
+                                );
+                              }}
+                            />
+                            {name}
+                          </label>
+                        ))}
+                      </fieldset>
+
+                      <fieldset className="space-y-1 border-t border-slate-200 pt-2">
+                        <legend className="pr-2 font-semibold">Format</legend>
+                        {formats.map(name => (
+                          <label key={name} className="flex cursor-pointer items-center gap-2 py-1">
+                            <input
+                              type="checkbox"
+                              checked={selectedFormats.includes(name)}
+                              onChange={event => {
+                                const checked = event.currentTarget.checked;
+                                setSelectedFormats(current =>
+                                  checked ? [...current, name] : current.filter(item => item !== name),
+                                );
+                              }}
+                            />
+                            {name}
+                          </label>
+                        ))}
+                      </fieldset>
+                    </section>
+                    <section className={panel}><h2 className="font-bold">My Borrowing</h2><a href="/#my-books" className="underline">View My Books</a></section>
+                  </aside>
+                </div>
+              ) : (
+                <section className={`${panel} mt-5`}>
+                  <h2 className="mb-2 text-xl font-bold">Recent Searches</h2>
+                  {history.length ? <ul className="flex flex-wrap gap-2">{history.map(item => <li key={item}><button type="button" className={field} onClick={() => submit(item)}>{item}</button></li>)}</ul>
+                    : <p className="text-slate-600">Your recent searches will appear here.</p>}
+                </section>
+              )}
+            </>
           )}
         </main>
         <footer className="bg-white px-6 py-3 text-sm">DurhamLibrary · Ajax · Oshawa · Whitby</footer>

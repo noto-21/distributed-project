@@ -3,6 +3,7 @@ export const formats = ["Book", "eBook", "Audiobook"] as const;
 
 export type Branch = (typeof branches)[number];
 export type Format = (typeof formats)[number];
+
 type Status = "Available" | "Checked out" | "No copy";
 
 export type Edition = {
@@ -12,29 +13,52 @@ export type Edition = {
   edition: string;
   format: Format;
   color: string;
+  description?: string;
   holdings: Record<Branch, Status>;
 };
 
+const littleWomenDescription =
+  "Meg, Jo, Beth, and Amy March grow up in Civil War–era New England, balancing family life with their own ambitions.";
+
 const editions: Edition[] = [
   {
-    isbn: "0147514010", title: "Little Women", author: "Louisa May Alcott",
-    edition: "Puffin Classics", format: "Book", color: "#315953",
+    isbn: "0147514010",
+    title: "Little Women",
+    author: "Louisa May Alcott",
+    edition: "Puffin Classics",
+    format: "Book",
+    color: "#315953",
+    description: littleWomenDescription,
     holdings: { Ajax: "Available", Oshawa: "Available", Whitby: "Checked out" },
   },
   {
-    isbn: "0486296342", title: "Little Women", author: "Louisa May Alcott",
-    edition: "Dover Thrift Edition", format: "Book", color: "#647d96",
+    isbn: "0486296342",
+    title: "Little Women",
+    author: "Louisa May Alcott",
+    edition: "Dover Thrift Edition",
+    format: "Book",
+    color: "#647d96",
+    description: littleWomenDescription,
     holdings: { Ajax: "Checked out", Oshawa: "No copy", Whitby: "Available" },
   },
   {
-    isbn: "0393072193", title: "Little Women: Annotated Edition",
-    author: "Louisa May Alcott", edition: "Annotated edition",
-    format: "Book", color: "#935b53",
+    isbn: "0393072193",
+    title: "Little Women: Annotated Edition",
+    author: "Louisa May Alcott",
+    edition: "Annotated edition",
+    format: "Book",
+    color: "#935b53",
+    description: littleWomenDescription,
     holdings: { Ajax: "Checked out", Oshawa: "No copy", Whitby: "Checked out" },
   },
   {
-    isbn: "9781775412226", title: "Little Women", author: "Louisa May Alcott",
-    edition: "Digital edition", format: "eBook", color: "#716387",
+    isbn: "9781775412226",
+    title: "Little Women",
+    author: "Louisa May Alcott",
+    edition: "Digital edition",
+    format: "eBook",
+    color: "#716387",
+    description: littleWomenDescription,
     holdings: { Ajax: "No copy", Oshawa: "Available", Whitby: "No copy" },
   },
 ];
@@ -49,6 +73,10 @@ export function searchCatalog(query: string) {
   });
 }
 
+export function findEdition(isbn: string) {
+  return editions.find(book => book.isbn === isbn);
+}
+
 type IsbnLookupResult = {
   isbn10: string;
   source: "local" | "peers";
@@ -58,6 +86,7 @@ type IsbnLookupResult = {
       isbn10: string;
       title: string;
       author: string[];
+      description?: string;
     };
   }[];
   offline: Lowercase<Branch>[];
@@ -74,12 +103,10 @@ export async function lookupIsbn(
     throw new Error("Enter a 10-character ISBN.");
   }
 
-  const branch = homeBranch.toLowerCase();
   const response = await fetch(
-    `/catalog-api/${branch}/api/circulation/books/${encodeURIComponent(isbn)}`,
+    `/catalog-api/${homeBranch.toLowerCase()}/api/circulation/books/${encodeURIComponent(isbn)}`,
   );
 
-  // The lookup endpoint returns 404 with an empty foundAt array for a miss.
   if (!response.ok && response.status !== 404) {
     throw new Error(`Catalog lookup failed (HTTP ${response.status}).`);
   }
