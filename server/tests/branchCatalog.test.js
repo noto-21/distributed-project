@@ -145,9 +145,19 @@ describe("public route GET /api/circulation/branches/:branch/books", () => {
       homeBranch: "oshawa",
     });
 
-  test("returns 401 when unauthenticated", async () => {
-    const res = await request(app).get("/api/circulation/branches/oshawa/books");
-    expect(res.status).toBe(401);
+   test("returns 200 when unauthenticated", async () => {
+    Library.find.mockReturnValue({ lean: jest.fn().mockResolvedValue(SAMPLE_BOOKS.oshawa) });
+
+    const res = await request(app)
+      .get("/api/circulation/branches/oshawa/books");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      branch: "oshawa",
+      source: "local",
+      count: 2,
+      books: SAMPLE_BOOKS.oshawa,
+    });
   });
 
   test("returns 200 with branch, source, count, and books when authenticated", async () => {
