@@ -1,18 +1,24 @@
 // Wrapper that automatically calls /api/auth/refresh using your refreshToken and retries the request
 export async function authFetch(url, options = {}) {
-  const branch = localStorage.getItem("homeBranch") || "oshawa";
+  const branch = localStorage.getItem("homeBranch");
   let token = localStorage.getItem("accessToken");
 
-  const makeRequest = (jwt) =>
+  const makeRequest = (jwt) => {
+    const headers = {
+      "Content-Type": "application/json",
+      ...options.headers,
+    };
+
+    // Only attach Authorization header if a valid token string exists
+    if (jwt) {
+      headers.Authorization = `Bearer ${jwt}`;
+    }
+
     fetch(url, {
       ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-        Authorization: `Bearer ${jwt}`,
-      },
+      headers,
     });
-
+  };
   let res = await makeRequest(token);
 
   // If the 15-min access token expired, rotate it using the refreshToken
