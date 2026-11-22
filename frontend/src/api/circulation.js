@@ -15,7 +15,10 @@ export async function fetchAllBranchCatalogs() {
     }
 
     const data = await res.json();
-    return { branch: targetBranch, books: data.books }; 
+    return {
+      branch: targetBranch,
+      books: data.objects ?? data.books ?? []
+    };
   });
 
   const results = await Promise.allSettled(requests);

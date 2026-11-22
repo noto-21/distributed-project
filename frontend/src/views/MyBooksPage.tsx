@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { useBranchCatalog } from "../recommendations/useBranchCatalog";
+import { recommendBooks } from "../recommendations/recommendations";
+
 
 // Describe the information stored for each book.
 type Book = {
@@ -149,7 +152,7 @@ export default function MyBooksPage() {
       title: "Pride and Prejudice",
       author: "Jane Austen",
       genre: "Classic fiction",
-      branch: "homebranch",
+      branch: homeBranch,
       status: "borrowed",
       borrowedAt: null,
       dueAt: null,
@@ -172,6 +175,14 @@ export default function MyBooksPage() {
   const borrowedCount = books.filter(
     (book) => book.status === "borrowed"
   ).length;
+
+
+  // Get the catalog from all three library branches.
+  const { catalog, loading, message } = useBranchCatalog();
+
+  // Generate recommendations from the catalog and My Books.
+  const recommendedBooks = recommendBooks(catalog, books);
+
 
 
   // Borrow a book only when it is ready at the home library.
@@ -511,6 +522,60 @@ export default function MyBooksPage() {
               <p className="mt-2 text-gray-600">
                 Discover your next read.
               </p>
+              
+
+              {loading && (
+                <p className="mt-4 text-gray-600">
+                  Loading recommendations...
+                </p>
+              )}
+
+              {message && (
+                <p className="mt-4 text-gray-600" role="status">
+                  {message}
+                </p>
+              )}
+
+
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                {recommendedBooks.map((book) => (
+                  <div
+                    key={book.isbn10}
+                    className="flex items-center gap-4 rounded-xl border border-gray-400 bg-white p-4"
+                  >
+                    {/* Book cover */}
+                    {book.thumbnail && (
+                      <img
+                        src={book.thumbnail.replace("http://", "https://")}
+                        alt={book.title}
+                        className="h-36 w-24 shrink-0 rounded object-cover"
+                      />
+                    )}
+
+                    {/* Book information */}
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-lg font-bold">
+                        {book.title}
+                      </h3>
+
+                      <p className="mt-1 text-sm text-gray-600">
+                        {book.categories}
+                      </p>
+
+                      <p className="mt-3 text-sm">
+                        {book.reason}
+                      </p>
+
+                      <p className="mt-3 text-sm font-semibold">
+                        Library: {book.currentBranch}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+
             </section>
           </div>
 
