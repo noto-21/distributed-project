@@ -29,7 +29,11 @@ export function useBranchCatalog() {
         setCatalog(books);
 
         if (books.length === 0) {
-          setMessage("Recommendations are unavailable. Sign in and check that the library servers are running.");
+          setMessage(
+            Object.keys(errors).length > 0
+            ? "Recommendations are unavailable. Sign in and check that the library servers are running."
+            : "No books are currently available across library branches."
+          );
         } else if (Object.keys(errors).length > 0) {
           setMessage("Some library branches could not be reached. Showing available results.");
         }

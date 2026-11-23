@@ -4,10 +4,12 @@ import { authFetch } from "./client";
 const BRANCHES = ["ajax", "oshawa", "whitby"];
 
 export async function fetchAllBranchCatalogs() {
-  const currentBranch = localStorage.getItem("homeBranch");
+  const homeBranch = localStorage.getItem("homeBranch");
 
   const requests = BRANCHES.map(async (targetBranch) => {  // request for each branch
-    const res = await authFetch(`/${currentBranch}/api/circulation/branches/${targetBranch}/books`);
+    // Route through homeBranch if signed in, or directly to targetBranch if signed out
+    const entryBranch = homeBranch || targetBranch;
+    const res = await authFetch(`/${entryBranch}/api/circulation/branches/${targetBranch}/books`);
     // Main HTTP request for getting all the books
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
