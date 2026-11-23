@@ -18,10 +18,14 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      const response = await fetch("/ajax/api/auth/register", {
+            const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          password,
+          homeBranch: branch.toLowerCase(),
+        }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -30,6 +34,7 @@ export default function SignupPage() {
       }
 
       localStorage.setItem("token", data.token);
+      localStorage.setItem("refreshToken", data.refreshToken);
       window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");

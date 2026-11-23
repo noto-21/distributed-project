@@ -1,5 +1,11 @@
 {
-  "plugins": {
-    "@tailwindcss/postcss": {}
+  "/catalog-api": {
+    "target": "http://localhost:8090",
+    "pathRewrite": {
+      "^/catalog-api": ""
+    }
+  },
+  "/api": {
+    "target": "http://localhost:8090"
   }
 }
