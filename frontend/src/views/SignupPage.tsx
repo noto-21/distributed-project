@@ -1,30 +1,29 @@
 import { useState, type FormEvent } from "react";
-import { branches } from "../api/catalog";
 
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
 const action = "w-full rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]";
 const field = "w-full rounded-md border border-[#9ca8bd] bg-white px-3 py-2";
 
 export default function SignupPage() {
-  const [branch, setBranch] = useState<string>(branches[0]);
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-            const response = await fetch("/api/auth/register", {
+      const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          name: username.trim(),
           email,
           password,
-          homeBranch: branch.toLowerCase(),
         }),
       });
 
@@ -64,16 +63,15 @@ export default function SignupPage() {
 
             <form className="space-y-4" onSubmit={handleSubmit}>
               <label className="block font-bold">
-                Library Branch
-                <select
+                Username
+                <input
+                  type="text"
+                  required
+                  placeholder="Enter Your Username"
                   className={`${field} mt-1 font-normal`}
-                  value={branch}
-                  onChange={(event) => setBranch(event.target.value)}
-                >
-                  {branches.map((name) => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
+                  value={username}
+                  onChange={(event) => setUsername(event.target.value)}
+                />
               </label>
 
               <label className="block font-bold">
@@ -102,7 +100,7 @@ export default function SignupPage() {
               </label>
 
               {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
-            
+
               <button type="submit" className={action} disabled={loading}>
                 {loading ? "Signing up..." : "Sign Up"}
               </button>
