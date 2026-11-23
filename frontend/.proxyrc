@@ -4,5 +4,8 @@
     "pathRewrite": {
       "^/catalog-api": ""
     }
+  },
+  "/ajax": {
+    "target": "http://localhost:8080"
   }
 }

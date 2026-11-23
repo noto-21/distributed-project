@@ -4,13 +4,38 @@ const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
 const action = "w-full rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]";
 const field = "w-full rounded-md border border-[#9ca8bd] bg-white px-3 py-2";
 
+
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Backend connection will be added later.
+    setError("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/ajax/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error ?? "Log in failed.");
+      }
+
+      localStorage.setItem("token", data.token);
+      window.location.href = "/";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -57,7 +82,10 @@ export default function LoginPage() {
                 />
               </label>
 
-              <button type="submit" className={action}>Log In</button>
+              {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
+              <button type="submit" className={action} disabled={loading}>
+                {loading ? "Logging in..." : "Log In"}
+              </button>
             </form>
 
             <a

@@ -9,10 +9,33 @@ export default function SignupPage() {
   const [branch, setBranch] = useState<string>(branches[0]);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // Backend connection will be added later.
+    setError("");
+    setLoading(true);
+
+    try {
+      const response = await fetch("/ajax/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error ?? "Sign up failed.");
+      }
+
+      localStorage.setItem("token", data.token);
+      window.location.href = "/";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -73,7 +96,11 @@ export default function SignupPage() {
                 />
               </label>
 
-              <button type="submit" className={action}>Sign Up</button>
+              {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
+            
+              <button type="submit" className={action} disabled={loading}>
+                {loading ? "Signing up..." : "Sign Up"}
+              </button>
             </form>
           </section>
         </main>
