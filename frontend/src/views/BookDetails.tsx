@@ -1,24 +1,37 @@
 import React, { useState } from "react";
 import { branches } from "../api/catalog";
-import type { Branch } from "../api/catalog";
+import type { Book, Branch } from "../api/catalog";
 
 type BookDetailsProps = {
-  isbn: string;
-  title: string;
-  author: string;
-  edition?: string;
-  format?: string;
+  book: Book;
   color?: string;
-  description?: string;
   holdings: { branch: Branch; status: string }[];
   warning?: string;
 };
+
+export function BookCover({ book, color, className }: { book: Book; color?: string; className: string }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  if (book.thumbnail && !imageFailed) {
+    return <img src={book.thumbnail} alt="" className={`${className} rounded-md object-cover`} onError={() => setImageFailed(true)} />;
+  }
+
+  return (
+    <div
+      aria-hidden="true"
+      className={`${className} grid place-items-center rounded-md p-1 text-center text-xs font-semibold text-white`}
+      style={{ backgroundColor: color ?? "#315953" }}
+    >
+      {book.title}
+    </div>
+  );
+}
 
 const homeBranch = "Oshawa";
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4 sm:p-5";
 
 export default function BookDetails({
-  isbn, title, author, edition, format, color, description, holdings, warning,
+  book, color, holdings, warning,
 }: BookDetailsProps) {
   const available = holdings.filter(holding => holding.status === "Available");
   const [source, setSource] = useState(
@@ -31,27 +44,31 @@ export default function BookDetails({
   return (
     <article aria-labelledby="book-title" className="mt-3 space-y-4">
       <div className={`${panel} grid items-start gap-5 sm:grid-cols-[auto_minmax(0,1fr)_10rem]`}>
-        <div
-          aria-hidden="true"
-          className="grid h-36 w-24 place-items-center rounded-md p-2 text-center text-sm font-semibold text-white sm:w-28"
-          style={{ backgroundColor: color ?? "#315953" }}
-        >
-          {title}
-        </div>
+        <BookCover key={book.isbn10} book={book} color={color} className="h-36 w-24 sm:w-28" />
         <div>
           <span className="inline-block rounded bg-green-50 px-2 py-1 text-xs font-semibold text-green-900">
             {available.length ? `Available at ${available.length} ${available.length === 1 ? "library" : "libraries"}` : "No available copies shown"}
           </span>
-          <h1 id="book-title" className="mt-2 text-3xl font-bold">{title}</h1>
-          {author && <p className="mt-1 text-slate-700">{author}</p>}
-          {(format || edition) && <p className="mt-2 text-sm text-slate-600">{[format, edition].filter(Boolean).join(" · ")}</p>}
-          {description && <p className="mt-3 max-w-prose text-sm">{description}</p>}
+          <h1 id="book-title" className="mt-2 text-3xl font-bold">{book.title}</h1>
+          {book.subtitle && <p className="mt-1 text-lg text-slate-700">{book.subtitle}</p>}
+          {book.authors.length > 0 && <p className="mt-1 text-slate-700">{book.authors.join(", ")}</p>}
+          {book.categories && <p className="mt-2 text-sm text-slate-600">{[book.categories].flat().join(", ")}</p>}
+          {book.description && <p className="mt-3 max-w-prose text-sm">{book.description}</p>}
         </div>
         <section className="rounded-lg bg-slate-100 p-3">
           <h2 className="font-bold">About this edition</h2>
           <dl className="mt-2 text-sm">
-            <dt className="text-slate-600">ISBN</dt>
-            <dd className="font-semibold">{isbn}</dd>
+            <dt className="text-slate-600">ISBN-10</dt>
+            <dd className="font-semibold">{book.isbn10}</dd>
+            {book.published_year != null && (
+              <><dt className="mt-2 text-slate-600">Published</dt><dd>{book.published_year}</dd></>
+            )}
+            {book.average_rating != null && (
+              <><dt className="mt-2 text-slate-600">Average rating</dt><dd>{book.average_rating} / 5</dd></>
+            )}
+            {book.ratings_count != null && (
+              <><dt className="mt-2 text-slate-600">Ratings</dt><dd>{book.ratings_count.toLocaleString()}</dd></>
+            )}
           </dl>
         </section>
       </div>
