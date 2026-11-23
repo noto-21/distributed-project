@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import SearchPage from "./views/SearchPage";
 import LoginPage from "./views/LoginPage";
 import SignupPage from "./views/SignupPage";
+import AuthCallbackPage from "./views/AuthCallbackPage";
 // @ts-ignore: Vite handles CSS imports during the build.
 import "./index.css";
 
@@ -12,6 +13,7 @@ function App() {
   if (path === "/search") return <SearchPage />;
   if (path === "/login") return <LoginPage />;
   if (path === "/signup") return <SignupPage />;
+  if (path === "/auth/callback") return <AuthCallbackPage />;
 
   return (
     <main className="p-4">

@@ -5,7 +5,16 @@
       "^/catalog-api": ""
     }
   },
+  "/api": {
+    "target": "http://localhost:8090"
+  },
   "/ajax": {
-    "target": "http://localhost:8080"
+    "target": "http://localhost:8090"
+  },
+  "/oshawa": {
+    "target": "http://localhost:8090"
+  },
+  "/whitby": {
+    "target": "http://localhost:8090"
   }
 }
