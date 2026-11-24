@@ -15,7 +15,7 @@ type LibraryBook = {
   _id: string;
   isbn10: string;
   title: string;
-  author: string[];
+  authors: string[];
   categories?: string;
   thumbnail?: string;
   description?: string;
@@ -358,7 +358,7 @@ export default function MyBooksPage() {
 
                       <div className="min-w-0 flex-1">
                         <h2 className="text-xl font-bold">{book.title}</h2>
-                        <p>{(book.author ?? []).join(", ") || "Author unavailable"}</p>
+                        <p>{(book.authors ?? []).join("; ") || "Author unavailable"}</p>
 
                         <p className="mt-1 text-sm text-gray-600">
                           {book.categories}

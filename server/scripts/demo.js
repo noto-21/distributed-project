@@ -17,7 +17,7 @@ const opt = (name, def) => (args.includes(`--${name}`) ? args[args.indexOf(`--${
 
 const GATEWAY = process.env.GATEWAY_URL || "http://localhost:8090";
 const ROOT = path.resolve(__dirname, "../..");
-const ISBN = opt("isbn", "0002005883");
+const ISBN = opt("isbn", "0701179791");
 const HOME = "ajax";
 const RUN = Date.now().toString(36);
 const PATRON = { email: `demo-${RUN}@demo.local`, password: "demo-password-1", name: "Demo Patron" };
