@@ -144,6 +144,12 @@ function SidebarCover({
 }
 
 export default function MyBooksPage() {
+  
+  useEffect(() => {
+    document.title = "My Books | Durham Library";
+  }, []);
+
+
   // Sample account. 
   const username = "Cameron";
   const homeBranch = "Oshawa";
@@ -318,16 +324,14 @@ export default function MyBooksPage() {
 
         {/* Header and navigation. */}
         <header className="flex flex-wrap items-center justify-between gap-4 bg-white px-6 py-4">
-          <a href="/" className="text-3xl font-bold">
-            <span className="text-[#5485F7]">Durham</span>Library
-          </a>
+          <a href="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</a>
 
           <nav
             aria-label="Main navigation"
             className="flex flex-wrap items-center gap-5"
           >
             <a href="/" className="underline" aria-current="page">
-              My Books
+              Home
             </a>
 
             <a href="/search">Search</a>
@@ -337,8 +341,12 @@ export default function MyBooksPage() {
             {/* Your teammate will connect logout to the login system. */}
             <button
               type="button"
-              disabled
-              className="rounded-md bg-[#777170] px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-60"
+              className="cursor-pointer rounded-md bg-[#777170] px-4 py-2 text-white hover:bg-[#655d5d]"
+              onClick={() => {
+                localStorage.removeItem("token");
+                localStorage.removeItem("refreshToken");
+                window.location.href = "/login";
+              }}
             >
               Log Out
             </button>

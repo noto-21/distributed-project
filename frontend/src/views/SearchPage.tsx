@@ -182,6 +182,11 @@ export default function SearchPage() {
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sort, setSort] = useState("relevance");
   const [signedIn, setSignedIn] = useState(hasSession);
+  const username = "Cameron"; // Sample Username
+
+  useEffect(() => {
+      document.title = "Search | Durham Library";
+    }, []);
 
   useEffect(() => {
     function restoreSearch() {
@@ -262,17 +267,23 @@ export default function SearchPage() {
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
           <a href="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</a>
           <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-5">
-            <a href="/">Home</a>
-            <a href="/#my-books">My Books</a>
+            <a href="/home"aria-current="page">Home</a>
             <a href="/search" className="underline" aria-current="page">Search</a>
-            {signedIn ? (
-              <button type="button" className={action} onClick={logOut}>Log Out</button>
-            ) : (
-              <>
-                <a href="/login" className="underline">Log In</a>
-                <a href="/signup" className="underline">Sign Up</a>
-              </>
-            )}
+            
+            <span>{username}</span>
+
+            <button
+              type="button"
+              className="cursor-pointer rounded-md bg-[#777170] px-4 py-2 text-white hover:bg-[#655d5d]"
+              onClick={() => {
+                localStorage.removeItem("token");
+                localStorage.removeItem("refreshToken");
+                window.location.href = "/login";
+              }}
+            >
+              Log Out
+            </button>
+
           </nav>
         </header>
         <main className="p-5 sm:p-7">

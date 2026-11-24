@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
 const action = "w-full rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]";
@@ -11,6 +11,10 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    document.title = "Log In | Durham Library";
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -28,6 +32,7 @@ export default function LoginPage() {
       if (!response.ok) {
         throw new Error(data.error ?? "Log in failed.");
       }
+      
 
       localStorage.setItem("token", data.token);
       localStorage.setItem("refreshToken", data.refreshToken);
@@ -42,12 +47,13 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-[#dff5f5] p-3 font-serif text-[#171717] sm:p-5">
       <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl bg-[#dce5f6] shadow-md">
+        
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
           <a href="/" className="text-2xl font-bold">
             <span className="text-[#4f82f6]">Durham</span>Library
           </a>
           <div className="flex items-center gap-3">
-            <span>Dont have an account?</span>
+            <span>Don't have an account?</span>
             <a href="/signup" className="rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]">
               Sign up?
             </a>
