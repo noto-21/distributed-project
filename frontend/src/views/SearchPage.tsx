@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, type MouseEventHandler } from "react";
 import { branches, findEdition, isIsbn10, lookupIsbn, searchCatalog } from "../api/catalog";
 import type { Branch, Edition } from "../api/catalog";
 import BookDetails, { BookCover } from "./BookDetails";
@@ -25,6 +25,11 @@ export function searchUrl(query: string, isbn10?: string, live = false) {
   return params.size ? `/search?${params}` : "/search";
 }
 
+function hasSession() {
+  const token = localStorage.getItem("token");
+  return Boolean(token && token !== "undefined" && token !== "null");
+}
+
 function readHistory(): string[] {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(historyKey) ?? "[]");
@@ -34,7 +39,11 @@ function readHistory(): string[] {
   }
 }
 
-function EditionCard({ book, query }: { book: Edition; query: string }) {
+function EditionCard({ book, query, onNavigate }: {
+  book: Edition;
+  query: string;
+  onNavigate: MouseEventHandler<HTMLAnchorElement>;
+}) {
   const available = branches.filter(branch => book.holdings[branch] === "Available").length;
   return (
     <article className={panel}>
@@ -64,6 +73,7 @@ function EditionCard({ book, query }: { book: Edition; query: string }) {
       </table>
       <a
         href={searchUrl(query, book.isbn10)}
+        onClick={onNavigate}
         aria-label={`View details for ${book.title}${book.subtitle ? `, ${book.subtitle}` : ""}`}
         className="mt-2 block border-t border-slate-200 pt-2 text-sm underline"
       >
@@ -73,7 +83,11 @@ function EditionCard({ book, query }: { book: Edition; query: string }) {
   );
 }
 
-function IsbnResults({ query, showDetails = false }: { query: string; showDetails?: boolean }) {
+function IsbnResults({ query, showDetails = false, onNavigate }: {
+  query: string;
+  showDetails?: boolean;
+  onNavigate: MouseEventHandler<HTMLAnchorElement>;
+}) {
   const [result, setResult] =
     useState<Awaited<ReturnType<typeof lookupIsbn>> | null>(null);
   const [error, setError] = useState("");
@@ -127,7 +141,7 @@ function IsbnResults({ query, showDetails = false }: { query: string; showDetail
       {sampleBook && (
         <div className="mt-2">
           <p className="mb-2 text-sm">Sample catalog match</p>
-          <EditionCard book={sampleBook} query={query} />
+          <EditionCard book={sampleBook} query={query} onNavigate={onNavigate} />
         </div>
       )}
       {!result && !error && <p role="status">Checking availability…</p>}
@@ -150,7 +164,7 @@ function IsbnResults({ query, showDetails = false }: { query: string; showDetail
             </ul>
           )}
           {!showDetails && book && (
-            <a href={searchUrl(query, result.isbn10, true)} className="mt-3 inline-block underline">
+            <a href={searchUrl(query, result.isbn10, true)} onClick={onNavigate} className="mt-3 inline-block underline">
               View details
             </a>
           )}
@@ -167,6 +181,7 @@ export default function SearchPage() {
   const [selectedLibraries, setSelectedLibraries] = useState<Branch[]>([]);
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sort, setSort] = useState("relevance");
+  const [signedIn, setSignedIn] = useState(hasSession);
 
   useEffect(() => {
     function restoreSearch() {
@@ -178,6 +193,35 @@ export default function SearchPage() {
     window.addEventListener("popstate", restoreSearch);
     return () => window.removeEventListener("popstate", restoreSearch);
   }, []);
+
+  useEffect(() => {
+    const syncSession = () => setSignedIn(hasSession());
+    window.addEventListener("storage", syncSession);
+    window.addEventListener("pageshow", syncSession);
+
+    return () => {
+      window.removeEventListener("storage", syncSession);
+      window.removeEventListener("pageshow", syncSession);
+    };
+  }, []);
+
+  function logOut() {
+    localStorage.removeItem("token");
+    localStorage.removeItem("refreshToken");
+    setSignedIn(false);
+  }
+
+  const navigateSearch: MouseEventHandler<HTMLAnchorElement> = event => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    event.preventDefault();
+    window.history.pushState(null, "", event.currentTarget.href);
+    const next = readSearchLocation();
+    setLocation(next);
+    setDraft(next.query);
+    setHistoryOpen(false);
+    window.scrollTo(0, 0);
+  };
 
   function submit(value: string) {
     const next = value.trim();
@@ -217,10 +261,18 @@ export default function SearchPage() {
       <div className="mx-auto max-w-7xl overflow-hidden rounded-2xl bg-[#dce5f6] shadow-md">
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
           <a href="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</a>
-          <nav aria-label="Main navigation" className="flex gap-5">
+          <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-5">
             <a href="/">Home</a>
             <a href="/#my-books">My Books</a>
             <a href="/search" className="underline" aria-current="page">Search</a>
+            {signedIn ? (
+              <button type="button" className={action} onClick={logOut}>Log Out</button>
+            ) : (
+              <>
+                <a href="/login" className="underline">Log In</a>
+                <a href="/signup" className="underline">Sign Up</a>
+              </>
+            )}
           </nav>
         </header>
         <main className="p-5 sm:p-7">
@@ -281,11 +333,11 @@ export default function SearchPage() {
           <p className="mt-2 text-sm text-slate-700">Ajax Public Library · Oshawa Public Libraries · Whitby Public Library</p>
           {bookIsbn ? (
             <>
-              <a href={query ? searchUrl(query) : "/"} className="mt-4 inline-block text-sm font-semibold underline">
+              <a href={query ? searchUrl(query) : "/"} onClick={query ? navigateSearch : undefined} className="mt-4 inline-block text-sm font-semibold underline">
                 {query ? "Back to search results" : "Back to home"}
               </a>
               {liveBook ? (
-                <IsbnResults key={bookIsbn} query={bookIsbn} showDetails />
+                <IsbnResults key={`details:${bookIsbn}`} query={bookIsbn} showDetails onNavigate={navigateSearch} />
               ) : selectedBook ? (
                 <BookDetails
                   book={selectedBook}
@@ -302,7 +354,7 @@ export default function SearchPage() {
           ) : (
             <>
               {isIsbnSearch ? (
-                <IsbnResults key={query} query={query} />
+                <IsbnResults key={`results:${query}`} query={query} onNavigate={navigateSearch} />
               ) : query ? (
                 <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_15rem]">
                   <section aria-labelledby="results-heading">
@@ -314,7 +366,7 @@ export default function SearchPage() {
                     </div>
                     <p className="my-2 text-sm" role="status">{results.length} {results.length === 1 ? "match" : "matches"} for “{query}” · Sample catalog</p>
                     <div className="space-y-3">
-                      {results.length ? results.map(book => <EditionCard key={book.isbn10} book={book} query={query} />) :
+                      {results.length ? results.map(book => <EditionCard key={book.isbn10} book={book} query={query} onNavigate={navigateSearch} />) :
                         <p className={panel}>No matching results. Try another title, author, category, or ISBN-10, or clear the filters.</p>}
                     </div>
                   </section>
