@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Toaster } from "react-hot-toast";
 import SearchPage from "./views/SearchPage";
 import LoginPage from "./views/LoginPage";
 import SignupPage from "./views/SignupPage";
@@ -43,5 +44,7 @@ function App() {
 createRoot(document.getElementById("root")!).render(
   <BrowserRouter>
     <App />
+    {/* One toaster for every page: action results, sign-in/out, load failures. */}
+    <Toaster position="top-center" toastOptions={{ duration: 5000 }} />
   </BrowserRouter>,
 );

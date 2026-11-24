@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { circulationAction } from "../api/circulation";
 import type { CatalogBook as Book } from "../recommendations/recommendations";
 
@@ -48,22 +49,24 @@ export default function BookDetails({
   // On the shelf at home: /requests just holds it there, no transfer.
   const availableAtHome = available.some(holding => holding.branch === homeBranch);
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
 
   // The backend picks which branch sends it and always delivers to the patron's home branch.
   async function requestBook() {
     if (!localStorage.getItem("token")) {
+      toast("Log in to request this book.", { icon: "🔒" });
       const { pathname, search } = window.location;
       navigate("/login", { state: { from: { pathname, search } } });
       return;
     }
     setBusy(true);
-    setResult(null);
     try {
-      const data = await circulationAction("requests", book.isbn10);
-      setResult({ text: data.message, error: false });
-    } catch (err) {
-      setResult({ text: err instanceof Error ? err.message : "Something went wrong.", error: true });
+      await toast.promise(circulationAction("requests", book.isbn10), {
+        loading: availableAtHome ? "Placing your hold…" : "Requesting this book from another library…",
+        success: (data: { message: string }) => data.message,
+        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
+      });
+    } catch {
+      // The error toast already says what happened.
     } finally {
       setBusy(false);
     }
@@ -154,11 +157,6 @@ export default function BookDetails({
                     ? "Hold at my branch"
                     : "Request to my branch"}
           </button>
-          {result && (
-            <p role={result.error ? "alert" : "status"} className={`text-sm ${result.error ? "text-red-700" : "text-green-900"}`}>
-              {result.text}
-            </p>
-          )}
         </section>
       </div>
     </article>
