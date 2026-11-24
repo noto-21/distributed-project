@@ -98,8 +98,7 @@ export default function LoginPage() {
 
             <div className="mt-4 flex items-center gap-2">
               <span className="font-bold">Log In With</span>
-                <a href="/api/auth/google?homeBranch=ajax" aria-label="Log in with Google" className="text-2xl font-bold">G</a>
-            </div>
+            <a href="/api/auth/google" aria-label="Log in with Google" className="text-2xl font-bold">G</a>            </div>
           </section>
         </main>
 
