@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { authFetch } from "../api/client";
 import { clearSession } from "../api/auth";
 import { circulationAction } from "../api/circulation";
+import toast from "react-hot-toast";
 import { useBranchCatalog } from "../recommendations/useBranchCatalog";
 import { recommendBooks } from "../recommendations/recommendations";
 
@@ -45,6 +46,14 @@ type MyBook = LibraryBook & { loan: Loan | null };
 // Rules shared throughout the page.
 const MAX_BOOKS = 3; // the backend enforces both limits too
 const MAX_RENEWALS = 2;
+
+// Loading toast text for each button while the server works.
+const actionLoading = {
+  checkout: "Checking out…",
+  return: "Returning…",
+  renew: "Renewing…",
+  "holds/cancel": "Cancelling hold…",
+};
 const ONE_DAY = 24 * 60 * 60 * 1000;
 
 async function getJson(url: string) {
@@ -168,8 +177,6 @@ export default function MyBooksPage() {
   const [booksLoading, setBooksLoading] = useState(true);
   const [booksError, setBooksError] = useState("");
 
-  // Result of the last button press: the backend's message, or its error.
-  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [busyIsbn, setBusyIsbn] = useState<string | null>(null);
 
   useEffect(() => {
@@ -183,7 +190,10 @@ export default function MyBooksPage() {
         setBooks(mine.books);
       })
       .catch((err) => {
-        if (!cancelled) setBooksError(err instanceof Error ? err.message : "Could not load your books.");
+        if (cancelled) return;
+        const text = err instanceof Error ? err.message : "Could not load your books.";
+        setBooksError(text);
+        toast.error(text, { id: "my-books-load" });
       })
       .finally(() => {
         if (!cancelled) setBooksLoading(false);
@@ -194,6 +204,7 @@ export default function MyBooksPage() {
 
   function handleLogout() {
     clearSession();
+    toast.success("You're logged out.");
     navigate("/login", { replace: true });
   }
 
@@ -224,19 +235,21 @@ export default function MyBooksPage() {
 
 
   // Checkout, return, renew or cancel on the server, then reload the list so it matches the server.
-  async function runAction(action: "checkout" | "return" | "renew" | "holds/cancel", isbn10: string) {
+  async function runAction(action: keyof typeof actionLoading, isbn10: string) {
     setBusyIsbn(isbn10);
-    setNotice(null);
     try {
-      const data = await circulationAction(action, isbn10);
-      setNotice({ text: [data.message, data.warning].filter(Boolean).join(" "), error: false });
-    } catch (err) {
-      setNotice({ text: err instanceof Error ? err.message : "Something went wrong.", error: true });
+      await toast.promise(circulationAction(action, isbn10), {
+        loading: actionLoading[action],
+        success: (data: { message: string; warning?: string }) => [data.message, data.warning].filter(Boolean).join(" "),
+        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
+      });
+    } catch {
+      // The error toast already says what happened.
     }
     try {
       setBooks((await getJson("/api/circulation/me/books")).books);
     } catch {
-      // Keep the current list; the notice above already says what happened.
+      toast.error("Could not refresh your books. Reload the page.", { id: "my-books-load" });
     } finally {
       setBusyIsbn(null);
     }
@@ -283,15 +296,6 @@ export default function MyBooksPage() {
               <p className="mt-2 text-gray-600">
                 Your requested and borrowed books.
               </p>
-
-              {notice && (
-                <p
-                  role={notice.error ? "alert" : "status"}
-                  className={`mt-4 rounded-md p-3 text-sm ${notice.error ? "bg-red-100 text-red-800" : "bg-green-100 text-green-900"}`}
-                >
-                  {notice.text}
-                </p>
-              )}
 
               <div className="mt-5 space-y-4">
 

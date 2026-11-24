@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { BRANCH_OPTIONS, register } from "../api/auth";
 
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
@@ -10,21 +11,24 @@ export default function SignupPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [homeBranch, setHomeBranch] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError("");
     setLoading(true);
 
     try {
-      await register({ name: username.trim(), email, password, homeBranch });
+      // register() can throw before any request (no branch picked), so wrap it in a promise for toast.promise.
+      await toast.promise(Promise.resolve().then(() => register({ name: username.trim(), email, password, homeBranch })), {
+        loading: "Creating your account…",
+        success: "Welcome to DurhamLibrary!",
+        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
+      });
       navigate("/", { replace: true });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } catch {
+      // The error toast already says what happened.
     } finally {
       setLoading(false);
     }
@@ -102,7 +106,6 @@ export default function SignupPage() {
                 </select>
               </label>
 
-              {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
 
               <button type="submit" className={action} disabled={loading}>
                 {loading ? "Signing up..." : "Sign Up"}

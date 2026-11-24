@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, type MouseEventHandler } from "react";
 import { Link } from "react-router-dom";
+import toast from "react-hot-toast";
 import { clearSession } from "../api/auth";
 import { useBranchCatalog } from "../recommendations/useBranchCatalog";
 import type { CatalogBook } from "../recommendations/recommendations";
@@ -170,6 +171,7 @@ export default function SearchPage() {
   function logOut() {
     clearSession();
     setSignedIn(false);
+    toast.success("You're logged out.");
   }
 
   const navigateSearch: MouseEventHandler<HTMLAnchorElement> = event => {

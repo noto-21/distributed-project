@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { BRANCH_OPTIONS, login, startGoogleSignIn } from "../api/auth";
 
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
@@ -11,7 +12,6 @@ const field = "w-full rounded-md border border-[#9ca8bd] bg-white px-3 py-2";
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleBranch, setGoogleBranch] = useState("");
   const navigate = useNavigate();
@@ -21,14 +21,17 @@ export default function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError("");
     setLoading(true);
 
     try {
-      await login(email, password);
+      await toast.promise(login(email, password), {
+        loading: "Logging in…",
+        success: (session: { user?: { name?: string } }) => `Welcome back${session.user?.name ? `, ${session.user.name}` : ""}!`,
+        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
+      });
       navigate(from, { replace: true });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } catch {
+      // The error toast already says what happened.
     } finally {
       setLoading(false);
     }
@@ -78,7 +81,6 @@ export default function LoginPage() {
                 />
               </label>
 
-              {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
               <button type="submit" className={action} disabled={loading}>
                 {loading ? "Logging in..." : "Log In"}
               </button>
