@@ -45,6 +45,8 @@ export default function BookDetails({
   const navigate = useNavigate();
   const homeBranch = storedHomeBranch();
   const available = holdings.filter(holding => holding.status === "Available");
+  // On the shelf at home: /requests just holds it there, no transfer.
+  const availableAtHome = available.some(holding => holding.branch === homeBranch);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
 
@@ -128,9 +130,13 @@ export default function BookDetails({
         <section className={`${panel} space-y-3`}>
           <h2 className="text-xl font-bold">Get this book</h2>
           <p className="text-sm text-slate-700">
-            {homeBranch
-              ? `We'll bring a copy to ${homeBranch} Public Library and hold it for you.`
-              : "Log in to have a copy brought to your home library."}
+            {available.length === 0
+              ? "No library has a copy on the shelf right now."
+              : !homeBranch
+                ? "Log in to have a copy held for you at your home library."
+                : availableAtHome
+                  ? `A copy is on the shelf at ${homeBranch} Public Library. We'll hold it for you to pick up.`
+                  : `We'll bring a copy from ${available.map(h => h.branch).join(" or ")} to ${homeBranch} Public Library and hold it for you.`}
           </p>
           <button
             type="button"
@@ -138,7 +144,15 @@ export default function BookDetails({
             disabled={busy || available.length === 0}
             className="w-full rounded-md bg-[#655d5d] px-3 py-2 text-sm font-semibold text-white hover:bg-[#534b4b] disabled:opacity-50"
           >
-            {available.length === 0 ? "No copies available right now" : busy ? "Requesting..." : "Request to my branch"}
+            {available.length === 0
+              ? "No copies available right now"
+              : busy
+                ? "Requesting..."
+                : !homeBranch
+                  ? "Log in to request"
+                  : availableAtHome
+                    ? "Hold at my branch"
+                    : "Request to my branch"}
           </button>
           {result && (
             <p role={result.error ? "alert" : "status"} className={`text-sm ${result.error ? "text-red-700" : "text-green-900"}`}>
