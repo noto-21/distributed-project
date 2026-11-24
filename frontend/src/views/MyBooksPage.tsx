@@ -146,7 +146,7 @@ function SidebarCover({
 export default function MyBooksPage() {
   
   useEffect(() => {
-    document.title = "My Books | Durham Library";
+    document.title = "Home | Durham Library";
   }, []);
 
 
