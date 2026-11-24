@@ -1,5 +1,5 @@
 import React, { useEffect, useState, type MouseEventHandler } from "react";
-import { branches, findEdition, isIsbn10, lookupIsbn, searchCatalog } from "../api/catalog";
+import { branches, findEdition, getFeaturedBooks, isIsbn10, lookupIsbn, searchCatalog } from "../api/catalog";
 import type { Branch, Edition } from "../api/catalog";
 import BookDetails, { BookCover } from "./BookDetails";
 
@@ -14,6 +14,7 @@ function readSearchLocation() {
     query: params.get("q")?.trim() ?? "",
     bookIsbn: params.get("book"),
     liveBook: params.get("source") === "live",
+    fromFeatured: params.get("source") === "featured",
   };
 }
 
@@ -37,6 +38,35 @@ function readHistory(): string[] {
   } catch {
     return [];
   }
+}
+
+function FeaturedBooks({ onNavigate }: { onNavigate: MouseEventHandler<HTMLAnchorElement> }) {
+  const books = getFeaturedBooks();
+  if (!books.length) return null;
+
+  return (
+    <section className="mt-6" aria-labelledby="featured-books-heading">
+      <h2 id="featured-books-heading" className="mb-3 text-xl font-bold">Featured books</h2>
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {books.map(book => (
+          <li key={book.isbn10} className={panel}>
+            <a
+              href={`${searchUrl("", book.isbn10)}&source=featured`}
+              onClick={onNavigate}
+              className="flex h-full flex-col items-start gap-2 rounded-md hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-700"
+            >
+              <BookCover book={book} color={book.color} className="h-24 w-16" />
+              <div>
+                <p className="font-semibold underline">{book.title}</p>
+                {book.subtitle && <p className="text-sm">{book.subtitle}</p>}
+                <p className="text-sm text-slate-600">{book.authors.join(", ")}</p>
+              </div>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 function EditionCard({ book, query, onNavigate }: {
@@ -174,7 +204,7 @@ function IsbnResults({ query, showDetails = false, onNavigate }: {
   );
 }
 export default function SearchPage() {
-  const [{ query, bookIsbn, liveBook }, setLocation] = useState(readSearchLocation);
+  const [{ query, bookIsbn, liveBook, fromFeatured }, setLocation] = useState(readSearchLocation);
   const [draft, setDraft] = useState(query);
   const [history, setHistory] = useState(readHistory);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -182,11 +212,6 @@ export default function SearchPage() {
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sort, setSort] = useState("relevance");
   const [signedIn, setSignedIn] = useState(hasSession);
-  const username = "Cameron"; // Sample Username
-
-  useEffect(() => {
-      document.title = "Search | Durham Library";
-    }, []);
 
   useEffect(() => {
     function restoreSearch() {
@@ -232,7 +257,7 @@ export default function SearchPage() {
     const next = value.trim();
     if (!next) return;
     if (next !== query || bookIsbn) window.history.pushState(null, "", searchUrl(next));
-    setLocation({ query: next, bookIsbn: null, liveBook: false });
+    setLocation({ query: next, bookIsbn: null, liveBook: false, fromFeatured: false });
     setDraft(next);
     setHistoryOpen(false);
     const recent = [next, ...history.filter(item => item.toLowerCase() !== next.toLowerCase())].slice(0, 8);
@@ -243,6 +268,7 @@ export default function SearchPage() {
       // The current session still keeps its history when storage is unavailable.
     }
   }
+  const returnToSearch = Boolean(query) || fromFeatured;
   const isIsbnSearch = isIsbn10(query);
   const matchingHistory = history.filter(item =>
     draft === query || item.toLowerCase().includes(draft.trim().toLowerCase()),
@@ -267,23 +293,16 @@ export default function SearchPage() {
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
           <a href="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</a>
           <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-5">
-            <a href="/home"aria-current="page">Home</a>
+            <a href="/#my-books">My Books</a>
             <a href="/search" className="underline" aria-current="page">Search</a>
-            
-            <span>{username}</span>
-
-            <button
-              type="button"
-              className="cursor-pointer rounded-md bg-[#777170] px-4 py-2 text-white hover:bg-[#655d5d]"
-              onClick={() => {
-                localStorage.removeItem("token");
-                localStorage.removeItem("refreshToken");
-                window.location.href = "/login";
-              }}
-            >
-              Log Out
-            </button>
-
+            {signedIn ? (
+              <button type="button" className={action} onClick={logOut}>Log Out</button>
+            ) : (
+              <>
+                <a href="/login" className="underline">Log In</a>
+                <a href="/signup" className="underline">Sign Up</a>
+              </>
+            )}
           </nav>
         </header>
         <main className="p-5 sm:p-7">
@@ -344,8 +363,12 @@ export default function SearchPage() {
           <p className="mt-2 text-sm text-slate-700">Ajax Public Library · Oshawa Public Libraries · Whitby Public Library</p>
           {bookIsbn ? (
             <>
-              <a href={query ? searchUrl(query) : "/"} onClick={query ? navigateSearch : undefined} className="mt-4 inline-block text-sm font-semibold underline">
-                {query ? "Back to search results" : "Back to home"}
+              <a
+                href={returnToSearch ? searchUrl(query) : "/"}
+                onClick={returnToSearch ? navigateSearch : undefined}
+                className="mt-4 inline-block text-sm font-semibold underline"
+              >
+                {query ? "Back to search results" : returnToSearch ? "Back to search" : "Back to home"}
               </a>
               {liveBook ? (
                 <IsbnResults key={`details:${bookIsbn}`} query={bookIsbn} showDetails onNavigate={navigateSearch} />
@@ -429,7 +452,9 @@ export default function SearchPage() {
                     <section className={panel}><h2 className="font-bold">My Borrowing</h2><a href="/#my-books" className="underline">View My Books</a></section>
                   </aside>
                 </div>
-              ) : null}
+              ) : (
+                <FeaturedBooks onNavigate={navigateSearch} />
+              )}
             </>
           )}
         </main>
