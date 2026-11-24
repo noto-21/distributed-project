@@ -56,6 +56,10 @@ const editions: Edition[] = [
   },
 ];
 
+export function getFeaturedBooks() {
+  return editions.slice(0, 5);
+}
+
 export function normalizeIsbn10(value: string) {
   return value.replace(/[\s-]/g, "").toUpperCase();
 }
