@@ -11,12 +11,13 @@ import "./index.css";
 function App() {
   const path = window.location.pathname.replace(/\/+$/, "") || "/";
 
+
   if (path === "/search") return <SearchPage />;
   if (path === "/login") return <LoginPage />;
   if (path === "/signup") return <SignupPage />;
   if (path === "/auth/callback") return <AuthCallbackPage />;
-  if (path === "/my-books" || (path === "/" && window.location.hash === "#my-books")) {
-    return <MyBooksPage />;
+
+  return <MyBooksPage />;
   }
 
   return (
