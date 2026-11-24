@@ -3,17 +3,39 @@ import { useBranchCatalog } from "../recommendations/useBranchCatalog";
 import { recommendBooks } from "../recommendations/recommendations";
 
 
-// Describe the information stored for each book.
-type Book = {
-  id: number;
+// Fields returned for a single catalog book by the library backend.
+type LibraryStatus = "AVAILABLE" | "BORROWED" | "IN_TRANSIT" | "ON_HOLD";
+
+type LibraryBook = {
+  _id: string;
+  isbn10: string;
   title: string;
-  author: string;
-  genre: string;
-  branch: string;
-  status: "ready" | "borrowed" | "transferring";
-  borrowedAt: number | null;
-  dueAt: number | null;
+  author: string[];
+  categories?: string;
+  thumbnail?: string;
+  description?: string;
+  average_rating?: number;
+  ratings_count?: number;
+  currentBranch: string;
+  originBranch?: string;
+  status: LibraryStatus;
+  activeTransferId?: string | null;
+  borrowedBy?: string | null;
+  heldFor?: string | null;
+  holdExpiresAt?: string | null;
 };
+
+// Loans are separate database records, keyed by ISBN-10.
+// Dates are ISO strings, as returned by the API.
+type Loan = {
+  isbn10: string;
+  status: "ACTIVE" | "RETURNED";
+  createdAt: string;
+  dueAt: string;
+};
+
+// The My Books view combines catalog details with a user's loan (if any).
+type MyBook = LibraryBook & { loan: Loan | null };
 
 // Rules shared throughout the page.
 const MAX_BOOKS = 3;
@@ -23,7 +45,7 @@ const LOAN_DAYS = 14;
 // One staff recommendation.
 const staffPicks = [
   {
-    isbn: "0147514010",
+    isbn10: "0147514010",
     title: "Little Women",
     staffName: "Maya",
   },
@@ -32,10 +54,15 @@ const staffPicks = [
 // One sample popular book.
 const hotRightNow = [
   {
-    isbn: "054792822X",
+    isbn10: "054792822X",
     title: "The Hobbit",
   },
 ];
+
+// Branch IDs are lowercase in the API, but capitalized on screen.
+function displayBranch(branch: string) {
+  return branch.charAt(0).toUpperCase() + branch.slice(1);
+}
 
 // Calculate a loan's remaining time and progress-bar percentage.
 function getLoanTiming(
@@ -86,10 +113,10 @@ function getLoanTiming(
 
 // Both sidebar sections can use this same cover component.
 function SidebarCover({
-  isbn,
+  isbn10,
   title,
 }: {
-  isbn: string;
+  isbn10: string;
   title: string;
 }) {
   // Show a text cover if the image cannot load.
@@ -103,7 +130,7 @@ function SidebarCover({
         </span>
       ) : (
         <img
-          src={`https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`}
+          src={`https://covers.openlibrary.org/b/isbn/${isbn10}-M.jpg?default=false`}
           alt={`Cover of ${title}`}
           width={64}
           height={96}
@@ -124,38 +151,51 @@ export default function MyBooksPage() {
   // Store the current time so the page can update as deadlines pass.
   const [now, setNow] = useState(() => Date.now());
 
-  // Sample books with dates relative to when the page opens.
-  // This initial list is created only when the component first loads.
-  const [books, setBooks] = useState<Book[]>(() => [
+  // Sample data ONLY: the fields now match the library catalog, and dates
+  // live in a separate loan object. Replace the demo records with API data later.
+  const [books, setBooks] = useState<MyBook[]>(() => [
     {
-      id: 1,
+      _id: "mock-little-women",
+      isbn10: "0147514010",
       title: "Little Women",
-      author: "Louisa May Alcott",
-      genre: "Classic fiction",
-      branch: homeBranch,
-      status: "borrowed",
-      borrowedAt: now - 12 * ONE_DAY,
-      dueAt: now + 2 * ONE_DAY,
+      author: ["Louisa May Alcott"],
+      categories: "Classic fiction",
+      currentBranch: homeBranch.toLowerCase(),
+      originBranch: homeBranch.toLowerCase(),
+      status: "BORROWED",
+      loan: {
+        isbn10: "0147514010",
+        status: "ACTIVE",
+        createdAt: new Date(now - 12 * ONE_DAY).toISOString(),
+        dueAt: new Date(now + 2 * ONE_DAY).toISOString(),
+      },
     },
     {
-      id: 2,
+      _id: "mock-hobbit",
+      isbn10: "054792822X",
       title: "The Hobbit",
-      author: "J. R. R. Tolkien",
-      genre: "Fantasy",
-      branch: homeBranch,
-      status: "borrowed",
-      borrowedAt: now - 16 * ONE_DAY,
-      dueAt: now - 2 * ONE_DAY,
+      author: ["J. R. R. Tolkien"],
+      categories: "Fantasy",
+      currentBranch: homeBranch.toLowerCase(),
+      originBranch: homeBranch.toLowerCase(),
+      status: "BORROWED",
+      loan: {
+        isbn10: "054792822X",
+        status: "ACTIVE",
+        createdAt: new Date(now - 16 * ONE_DAY).toISOString(),
+        dueAt: new Date(now - 2 * ONE_DAY).toISOString(),
+      },
     },
     {
-      id: 3,
+      _id: "mock-pride-and-prejudice",
+      isbn10: "0141439513",
       title: "Pride and Prejudice",
-      author: "Jane Austen",
-      genre: "Classic fiction",
-      branch: homeBranch,
-      status: "borrowed",
-      borrowedAt: null,
-      dueAt: null,
+      author: ["Jane Austen"],
+      categories: "Classic fiction",
+      currentBranch: homeBranch.toLowerCase(),
+      originBranch: homeBranch.toLowerCase(),
+      status: "BORROWED",
+      loan: null, // Demo case: loan details have not loaded yet.
     },
   ]);
 
@@ -173,7 +213,7 @@ export default function MyBooksPage() {
   const slotsUsed = books.length;
 
   const borrowedCount = books.filter(
-    (book) => book.status === "borrowed"
+    (book) => book.status === "BORROWED"
   ).length;
 
 
@@ -186,31 +226,35 @@ export default function MyBooksPage() {
 
 
   // Borrow a book only when it is ready at the home library.
-  function checkoutBook(bookId: number) {
+  function checkoutBook(bookId: string) {
     const checkoutTime = Date.now();
     setNow(checkoutTime);
 
     setBooks((currentBooks) => {
       const currentBorrowedCount = currentBooks.filter(
-        (book) => book.status === "borrowed"
+        (book) => book.status === "BORROWED"
       ).length;
 
       if (currentBorrowedCount >= MAX_BOOKS) {
         return currentBooks;
       }
 
-      return currentBooks.map((book): Book => {
+      return currentBooks.map((book): MyBook => {
         // Check the selected book's status and location.
         if (
-          book.id === bookId &&
-          book.status === "ready" &&
-          book.branch.toLowerCase() === homeBranch.toLowerCase()
+          book._id === bookId &&
+          book.status === "AVAILABLE" &&
+          book.currentBranch.toLowerCase() === homeBranch.toLowerCase()
         ) {
           return {
             ...book,
-            status: "borrowed",
-            borrowedAt: checkoutTime,
-            dueAt: checkoutTime + LOAN_DAYS * ONE_DAY,
+            status: "BORROWED",
+            loan: {
+              isbn10: book.isbn10,
+              status: "ACTIVE",
+              createdAt: new Date(checkoutTime).toISOString(),
+              dueAt: new Date(checkoutTime + LOAN_DAYS * ONE_DAY).toISOString(),
+            },
           };
         }
 
@@ -221,41 +265,45 @@ export default function MyBooksPage() {
   }
 
   // Remove a borrowed book and free its slot.
-  function returnBook(bookId: number) {
+  function returnBook(bookId: string) {
     setBooks((currentBooks) =>
       currentBooks.filter(
-        (book) => book.id !== bookId || book.status !== "borrowed"
+        (book) => book._id !== bookId || book.status !== "BORROWED"
       )
     );
   }
 
   // Remove a request that has not been checked out.
-  function cancelRequest(bookId: number) {
+  function cancelRequest(bookId: string) {
     setBooks((currentBooks) =>
       currentBooks.filter(
-        (book) => book.id !== bookId || book.status === "borrowed"
+        (book) => book._id !== bookId || book.status === "BORROWED"
       )
     );
   }
 
   // Demo rule: add 14 days to the current due date.
   // For overdue books, give 14 days from today.
-  function renewBook(bookId: number) {
+  function renewBook(bookId: string) {
     const renewalTime = Date.now();
     setNow(renewalTime);
 
     setBooks((currentBooks) =>
-      currentBooks.map((book): Book => {
+      currentBooks.map((book): MyBook => {
         if (
-          book.id === bookId &&
-          book.status === "borrowed" &&
-          book.dueAt !== null
+          book._id === bookId &&
+          book.status === "BORROWED" &&
+          book.loan !== null
         ) {
           return {
             ...book,
-            dueAt:
-              Math.max(book.dueAt, renewalTime) +
-              LOAN_DAYS * ONE_DAY,
+            loan: {
+              ...book.loan,
+              dueAt: new Date(
+                Math.max(new Date(book.loan.dueAt).getTime(), renewalTime) +
+                LOAN_DAYS * ONE_DAY
+              ).toISOString(),
+            },
           };
         }
 
@@ -326,43 +374,54 @@ export default function MyBooksPage() {
                 {books.map((book) => {
                   // Calculate timing only for a valid borrowed book.
                   const timing =
-                    book.status === "borrowed" &&
-                    book.borrowedAt !== null &&
-                    book.dueAt !== null
-                      ? getLoanTiming(book.borrowedAt, book.dueAt, now)
+                    book.status === "BORROWED" &&
+                    book.loan?.status === "ACTIVE"
+                      ? getLoanTiming(
+                          new Date(book.loan.createdAt).getTime(),
+                          new Date(book.loan.dueAt).getTime(),
+                          now
+                        )
                       : null;
 
                   // Compare library names without worrying about capital letters.
                   const atHome =
-                    book.branch.toLowerCase() === homeBranch.toLowerCase();
+                    book.currentBranch.toLowerCase() === homeBranch.toLowerCase();
 
                   return (
                     <article
-                      key={book.id}
+                      key={book._id}
                       className="flex flex-wrap items-center gap-4 rounded-xl border border-gray-400 bg-white p-5"
                     >
-                      {/* Simple cover placeholder. */}
-                      <div
-                        aria-hidden="true"
-                        className="flex h-28 w-20 shrink-0 items-center justify-center rounded bg-[#DDE7F8] p-2 text-center text-sm font-bold"
-                      >
-                        {book.title}
-                      </div>
+                      {/* Use the backend cover when present; keep the text fallback. */}
+                      {book.thumbnail ? (
+                        <img
+                          src={book.thumbnail.replace(/^http:/, "https:")}
+                          alt={`Cover of ${book.title}`}
+                          className="h-28 w-20 shrink-0 rounded object-cover"
+                        />
+                      ) : (
+                        <div
+                          aria-hidden="true"
+                          className="flex h-28 w-20 shrink-0 items-center justify-center rounded bg-[#DDE7F8] p-2 text-center text-sm font-bold"
+                        >
+                          {book.title}
+                        </div>
+                      )}
 
                       <div className="min-w-0 flex-1">
                         <h2 className="text-xl font-bold">{book.title}</h2>
-                        <p>{book.author}</p>
+                        <p>{book.author.join(", ") || "Author unavailable"}</p>
 
                         <p className="mt-1 text-sm text-gray-600">
-                          {book.genre}
+                          {book.categories}
                         </p>
 
                         <p className="mt-1 text-sm font-bold">
-                          Library: {book.branch}
+                          Library: {displayBranch(book.currentBranch)}
                         </p>
 
                         {/* Display the countdown bar only after checkout. */}
-                        {timing !== null && book.dueAt !== null && (
+                        {timing !== null && book.loan !== null && (
                           <div className="mt-3 max-w-sm">
                             <div
                               role="progressbar"
@@ -406,7 +465,7 @@ export default function MyBooksPage() {
 
                             <p className="mt-1 text-sm text-gray-600">
                               Due:{" "}
-                              {new Date(book.dueAt).toLocaleDateString(
+                              {new Date(book.loan.dueAt).toLocaleDateString(
                                 "en-CA"
                               )}
                             </p>
@@ -436,17 +495,19 @@ export default function MyBooksPage() {
                             ? "bg-red-100 text-red-700"
                             : timing?.dueSoon
                               ? "bg-amber-100 text-amber-700"
-                              : book.status === "borrowed"
+                              : book.status === "BORROWED"
                                 ? "bg-gray-100 text-gray-700"
-                                : book.status === "transferring"
+                                : book.status === "IN_TRANSIT"
                                   ? "bg-blue-100 text-blue-700"
-                                  : atHome
+                                  : book.status === "ON_HOLD"
+                                    ? "bg-violet-100 text-violet-800"
+                                    : atHome
                                     ? "bg-green-100 text-green-800"
                                     : "bg-amber-100 text-amber-800"
                         }`}
                       >
                         {/* Show a spinning circle only while the book is transferring. */}
-                        {book.status === "transferring" && (
+                        {book.status === "IN_TRANSIT" && (
                           <span
                             aria-hidden="true"
                             className="h-3 w-3 animate-spin rounded-full border-2 border-current border-r-transparent"
@@ -457,20 +518,22 @@ export default function MyBooksPage() {
                           ? "⚑ Overdue"
                           : timing?.dueSoon
                             ? "Due soon"
-                            : book.status === "borrowed"
+                            : book.status === "BORROWED"
                               ? "Checked out"
-                              : book.status === "transferring"
+                              : book.status === "IN_TRANSIT"
                                 ? `Transferring to ${homeBranch}…`
-                                : atHome
-                                  ? "Available locally"
-                                  : `Transfer required from ${book.branch}`}
+                                : book.status === "ON_HOLD"
+                                  ? "On hold"
+                                  : atHome
+                                    ? "Available locally"
+                                    : `Transfer required from ${displayBranch(book.currentBranch)}`}
                       </p>
 
-                        {book.status === "borrowed" ? (
+                        {book.status === "BORROWED" ? (
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              onClick={() => returnBook(book.id)}
+                              onClick={() => returnBook(book._id)}
                               className="rounded-md bg-[#777170] px-4 py-2 text-white"
                             >
                               Return
@@ -478,7 +541,7 @@ export default function MyBooksPage() {
 
                             <button
                               type="button"
-                              onClick={() => renewBook(book.id)}
+                              onClick={() => renewBook(book._id)}
                               className="rounded-md border border-[#777170] px-4 py-2 text-[#777170]"
                             >
                               Renew
@@ -488,9 +551,9 @@ export default function MyBooksPage() {
                           <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => checkoutBook(book.id)}
+                            onClick={() => checkoutBook(book._id)}
                             disabled={
-                              book.status !== "ready" ||
+                              book.status !== "AVAILABLE" ||
                               !atHome ||
                               borrowedCount >= MAX_BOOKS
                             }
@@ -501,7 +564,7 @@ export default function MyBooksPage() {
 
                             <button
                               type="button"
-                              onClick={() => cancelRequest(book.id)}
+                              onClick={() => cancelRequest(book._id)}
                               className="rounded-md border border-[#777170] px-4 py-2 text-[#777170]"
                             >
                               Cancel Request
@@ -568,7 +631,7 @@ export default function MyBooksPage() {
                       </p>
 
                       <p className="mt-3 text-sm font-semibold">
-                        Library: {book.currentBranch}
+                        Library: {displayBranch(book.currentBranch ?? "Unknown")}
                       </p>
                     </div>
                   </div>
@@ -615,10 +678,10 @@ export default function MyBooksPage() {
               <div className="mt-4 space-y-4">
                 {staffPicks.map((book) => (
                   <article
-                    key={book.isbn}
+                    key={book.isbn10}
                     className="flex items-start gap-3"
                   >
-                    <SidebarCover isbn={book.isbn} title={book.title} />
+                    <SidebarCover isbn10={book.isbn10} title={book.title} />
 
                     <div className="min-w-0">
                       <h3 className="font-bold">{book.title}</h3>
@@ -639,10 +702,10 @@ export default function MyBooksPage() {
               <div className="mt-4 space-y-4">
                 {hotRightNow.map((book) => (
                   <article
-                    key={book.isbn}
+                    key={book.isbn10}
                     className="flex items-start gap-3"
                   >
-                    <SidebarCover isbn={book.isbn} title={book.title} />
+                    <SidebarCover isbn10={book.isbn10} title={book.title} />
 
                     <h3 className="min-w-0 font-bold">
                       {book.title}
