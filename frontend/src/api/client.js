@@ -1,51 +1,45 @@
-// Wrapper that automatically calls /api/auth/refresh using your refreshToken and retries the request
-export async function authFetch(url, options = {}) {
-  const branch = localStorage.getItem("homeBranch");
-  let token = localStorage.getItem("accessToken");
+import { clearSession, saveSession } from "./auth";
 
-  const makeRequest = (jwt) => {
-    const headers = {
+// One refresh at a time: refresh tokens are single use, and a reused one revokes every session.
+let refreshing = null;
+
+function refreshSession() {
+  refreshing ??= (async () => {
+    const refreshToken = localStorage.getItem("refreshToken");
+    if (!refreshToken) return null;
+    const res = await fetch("/api/auth/refresh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+    if (!res.ok) {
+      clearSession();
+      return null;
+    }
+    const session = await res.json();
+    saveSession(session);
+    return session.token;
+  })().finally(() => { refreshing = null; });
+  return refreshing;
+}
+
+// fetch that adds the Bearer token, and on TOKEN_EXPIRED refreshes once and retries.
+export async function authFetch(url, options = {}) {
+  const makeRequest = (jwt) => fetch(url, {
+    ...options,
+    headers: {
       "Content-Type": "application/json",
       ...options.headers,
-    };
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+    },
+  });
 
-    // Only attach Authorization header if a valid token string exists
-    if (jwt) {
-      headers.Authorization = `Bearer ${jwt}`;
-    }
+  const res = await makeRequest(localStorage.getItem("token"));
+  if (res.status !== 401) return res;
 
-    fetch(url, {
-      ...options,
-      headers,
-    });
-  };
-  let res = await makeRequest(token);
+  const errBody = await res.clone().json().catch(() => ({}));
+  if (errBody.code !== "TOKEN_EXPIRED") return res;
 
-  // If the 15-min access token expired, rotate it using the refreshToken
-  if (res.status === 401) {
-    const errBody = await res.clone().json().catch(() => ({}));
-    const refreshToken = localStorage.getItem("refreshToken");
-
-    if (errBody.code === "TOKEN_EXPIRED" && refreshToken) {
-      const refreshRes = await fetch(`/${branch}/api/auth/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken }),
-      });
-
-      if (refreshRes.ok) {
-        const session = await refreshRes.json();
-        localStorage.setItem("accessToken", session.token);
-        localStorage.setItem("refreshToken", session.refreshToken);
-        // Retry the original request with the new JWT
-        res = await makeRequest(session.token);
-      } else {
-        // Refresh token invalid or reused, clear session
-        localStorage.removeItem("accessToken");
-        localStorage.removeItem("refreshToken");
-      }
-    }
-  }
-
-  return res;
+  const newToken = await refreshSession();
+  return newToken ? makeRequest(newToken) : res;
 }

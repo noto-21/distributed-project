@@ -11,6 +11,7 @@ const loanSchema = new mongoose.Schema(
     checkoutLamport: { type: Number, required: true },
     dueAt: { type: Date, required: true }, // wall clock is fine: due dates are local to this branch
     returnLamport: Number,
+    renewCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

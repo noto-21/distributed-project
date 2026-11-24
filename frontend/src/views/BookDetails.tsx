@@ -1,6 +1,10 @@
 import React, { useState } from "react";
-import { branches } from "../api/catalog";
-import type { Book, Branch } from "../api/catalog";
+import { useNavigate } from "react-router-dom";
+import { circulationAction } from "../api/circulation";
+import type { CatalogBook as Book } from "../recommendations/recommendations";
+
+export const branches = ["Ajax", "Oshawa", "Whitby"] as const;
+export type Branch = (typeof branches)[number];
 
 type BookDetailsProps = {
   book: Book;
@@ -27,19 +31,43 @@ export function BookCover({ book, color, className }: { book: Book; color?: stri
   );
 }
 
-const homeBranch = "Oshawa";
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4 sm:p-5";
+
+// Stored lowercase ("oshawa"); the catalog uses display names ("Oshawa").
+function storedHomeBranch(): Branch | undefined {
+  const branch = localStorage.getItem("homeBranch");
+  return branch ? (branch[0].toUpperCase() + branch.slice(1)) as Branch : undefined;
+}
 
 export default function BookDetails({
   book, color, holdings, warning,
 }: BookDetailsProps) {
+  const navigate = useNavigate();
+  const homeBranch = storedHomeBranch();
   const available = holdings.filter(holding => holding.status === "Available");
-  const [source, setSource] = useState(
-    () => available.find(holding => holding.branch === homeBranch) ?? available[0],
-  );
-  const [pickup, setPickup] = useState<Branch>(homeBranch);
-  const [preview, setPreview] = useState("");
-  const action = source?.status === "Checked out" ? "Place hold" : "Request this book";
+  // On the shelf at home: /requests just holds it there, no transfer.
+  const availableAtHome = available.some(holding => holding.branch === homeBranch);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ text: string; error: boolean } | null>(null);
+
+  // The backend picks which branch sends it and always delivers to the patron's home branch.
+  async function requestBook() {
+    if (!localStorage.getItem("token")) {
+      const { pathname, search } = window.location;
+      navigate("/login", { state: { from: { pathname, search } } });
+      return;
+    }
+    setBusy(true);
+    setResult(null);
+    try {
+      const data = await circulationAction("requests", book.isbn10);
+      setResult({ text: data.message, error: false });
+    } catch (err) {
+      setResult({ text: err instanceof Error ? err.message : "Something went wrong.", error: true });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <article aria-labelledby="book-title" className="mt-3 space-y-4">
@@ -51,7 +79,7 @@ export default function BookDetails({
           </span>
           <h1 id="book-title" className="mt-2 text-3xl font-bold">{book.title}</h1>
           {book.subtitle && <p className="mt-1 text-lg text-slate-700">{book.subtitle}</p>}
-          {book.authors.length > 0 && <p className="mt-1 text-slate-700">{book.authors.join(", ")}</p>}
+          {book.author?.length ? <p className="mt-1 text-slate-700">{book.author.join(", ")}</p> : null}
           {book.categories && <p className="mt-2 text-sm text-slate-600">{[book.categories].flat().join(", ")}</p>}
           {book.description && <p className="mt-3 max-w-prose text-sm">{book.description}</p>}
         </div>
@@ -60,9 +88,6 @@ export default function BookDetails({
           <dl className="mt-2 text-sm">
             <dt className="text-slate-600">ISBN-10</dt>
             <dd className="font-semibold">{book.isbn10}</dd>
-            {book.published_year != null && (
-              <><dt className="mt-2 text-slate-600">Published</dt><dd>{book.published_year}</dd></>
-            )}
             {book.average_rating != null && (
               <><dt className="mt-2 text-slate-600">Average rating</dt><dd>{book.average_rating} / 5</dd></>
             )}
@@ -83,7 +108,6 @@ export default function BookDetails({
                 <tr>
                   <th scope="col" className="px-2 py-2">Library</th>
                   <th scope="col" className="px-2 py-2">Availability</th>
-                  <th scope="col" className="px-2 py-2 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -96,19 +120,6 @@ export default function BookDetails({
                     <td className={holding.status === "Available" ? "px-2 py-3 font-semibold text-green-900" : "px-2 py-3 text-slate-700"}>
                       {holding.status}
                     </td>
-                    <td className="px-2 py-3 text-right">
-                      {(holding.status === "Available" || holding.status === "Checked out") && (
-                        <button
-                          type="button"
-                          aria-label={`Select ${holding.branch} for ${holding.status === "Checked out" ? "a hold" : "a request"}`}
-                          aria-pressed={source?.branch === holding.branch}
-                          className="rounded-md border border-slate-300 px-2 py-1 hover:bg-slate-50 aria-pressed:border-slate-600 aria-pressed:bg-slate-100"
-                          onClick={() => { setSource(holding); setPreview(""); }}
-                        >
-                          {source?.branch === holding.branch ? "Selected" : holding.status === "Checked out" ? "Place hold" : "Select"}
-                        </button>
-                      )}
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -116,39 +127,39 @@ export default function BookDetails({
           </div>
         </section>
 
-        <form
-          className={`${panel} space-y-3`}
-          onSubmit={event => {
-            event.preventDefault();
-            if (source) setPreview(`Preview: ${action} from ${source.branch} for pickup at ${pickup}. No request was sent.`);
-          }}
-        >
+        <section className={`${panel} space-y-3`}>
           <h2 className="text-xl font-bold">Get this book</h2>
-          <div className="rounded-md border border-slate-300 bg-[#edf0f8] p-3 text-sm">
-            <p className="text-xs text-slate-600">Selected library</p>
-            <p className="font-semibold">{source ? `${source.branch} Public Library` : "Choose a library"}</p>
-            {source && <p className="mt-1">{source.status}</p>}
-          </div>
-          <label className="block text-sm font-semibold">
-            Pickup library
-            <select
-              className="mt-1 block w-full rounded-md border border-slate-400 bg-white px-2 py-2 font-normal"
-              value={pickup}
-              onChange={event => { setPickup(event.currentTarget.value as Branch); setPreview(""); }}
-            >
-              {branches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
-            </select>
-          </label>
+          <p className="text-sm text-slate-700">
+            {available.length === 0
+              ? "No library has a copy on the shelf right now."
+              : !homeBranch
+                ? "Log in to have a copy held for you at your home library."
+                : availableAtHome
+                  ? `A copy is on the shelf at ${homeBranch} Public Library. We'll hold it for you to pick up.`
+                  : `We'll bring a copy from ${available.map(h => h.branch).join(" or ")} to ${homeBranch} Public Library and hold it for you.`}
+          </p>
           <button
-            type="submit"
-            disabled={!source}
+            type="button"
+            onClick={requestBook}
+            disabled={busy || available.length === 0}
             className="w-full rounded-md bg-[#655d5d] px-3 py-2 text-sm font-semibold text-white hover:bg-[#534b4b] disabled:opacity-50"
           >
-            {action}
+            {available.length === 0
+              ? "No copies available right now"
+              : busy
+                ? "Requesting..."
+                : !homeBranch
+                  ? "Log in to request"
+                  : availableAtHome
+                    ? "Hold at my branch"
+                    : "Request to my branch"}
           </button>
-          <p className="text-xs text-slate-600">Request preview</p>
-          {preview && <p role="status" className="text-sm">{preview}</p>}
-        </form>
+          {result && (
+            <p role={result.error ? "alert" : "status"} className={`text-sm ${result.error ? "text-red-700" : "text-green-900"}`}>
+              {result.text}
+            </p>
+          )}
+        </section>
       </div>
     </article>
   );
