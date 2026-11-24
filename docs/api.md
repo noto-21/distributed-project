@@ -27,7 +27,7 @@ Every error has the same shape. Branch on `code`, not on the message text.
 | 401 | `UNAUTHORIZED` (no token), `TOKEN_EXPIRED` (refresh it), `TOKEN_INVALID`, `INVALID_CREDENTIALS`, `INVALID_REFRESH_TOKEN`, `REFRESH_TOKEN_REUSED` |
 | 403 | `FORBIDDEN` (wrong role) |
 | 404 | `BOOK_NOT_FOUND`, `USER_NOT_FOUND` |
-| 409 | `EMAIL_TAKEN`, `BOOK_UNAVAILABLE`, `NOT_BORROWED_BY_YOU`, `RETRY` |
+| 409 | `EMAIL_TAKEN`, `BOOK_UNAVAILABLE`, `NOT_BORROWED_BY_YOU`, `NOT_HELD_FOR_YOU`, `LIMIT_REACHED`, `RENEW_LIMIT`, `RETRY` |
 | 429 | `RATE_LIMITED` |
 | 503 | `HOME_BRANCH_OFFLINE` (the user's branch is down: show "your branch is temporarily unavailable"), `PEER_UNAVAILABLE` |
 | 500 | `INTERNAL_ERROR` (never includes internals) |
@@ -150,8 +150,25 @@ Show **`message`** to the patron. It's written for them, e.g. *"Whitby is sendin
 | `404 BOOK_NOT_FOUND` (with `offline`, `warning`) | No reachable branch can send it |
 | `409 BOOK_UNAVAILABLE` | Every copy was just taken |
 | `409 RETRY` | A copy appeared here mid-request; just retry |
+| `409 LIMIT_REACHED` | The patron already has 3 books borrowed or on hold |
 
 Holds last `HOLD_DAYS` (3 by default). After that, the copy goes back on the shelf.
+
+### `POST /holds/cancel` 🔒
+
+Body: `{ "isbn10": "…" }`. Releases your hold. A copy that came from another branch is sent back there, like a return. `200 { message, routedTo, … }`, with the same `routedTo` and `warning` meaning as `/return`. `message` reads like *"Your hold on “Gilead” is cancelled. It's going back to Whitby."*
+
+Errors: `409 NOT_HELD_FOR_YOU`, `404 BOOK_NOT_FOUND`.
+
+### `GET /me/books` 🔒
+
+Everything for the My Books page in one call: every copy you have borrowed or on hold at your branch (full book fields from the database, no `custodyHistory`). Borrowed copies carry their active `loan`; held copies have `loan: null`.
+
+```json
+{ "books": [ { "isbn10": "…", "title": "Gilead", "author": [], "thumbnail": "…", "status": "BORROWED | ON_HOLD",
+               "holdExpiresAt": null, "loan": { "dueAt": "…", "createdAt": "…", "renewCount": 0 } } ],
+  "maxBooks": 3, "maxRenewals": 2 }
+```
 
 ### `GET /holds/me` 🔒
 
@@ -168,7 +185,13 @@ Body: `{ "isbn10": "…" }`. Takes a copy at your branch that is on the shelf, o
   "loan": { "_id": "…", "isbn10": "…", "userId": "…", "branch": "ajax", "status": "ACTIVE", "dueAt": "2026-12-03T…", "checkoutLamport": 93 } }
 ```
 
-Errors: `409 BOOK_UNAVAILABLE` (borrowed, in transit, or held for someone else); `404 BOOK_NOT_FOUND` (not at this branch).
+Errors: `409 BOOK_UNAVAILABLE` (borrowed, in transit, or held for someone else); `409 LIMIT_REACHED` (already 3 books; checking out your own hold is always allowed); `404 BOOK_NOT_FOUND` (not at this branch).
+
+### `POST /renew` 🔒
+
+Body: `{ "isbn10": "…" }`. Adds `LOAN_DAYS` (14) to the later of the due date and today, at most 2 times per loan. `200 { message, loan, renewalsLeft }`, where `message` reads like *"Renewed “Gilead”. It's now due Thu, Dec 17."*
+
+Errors: `409 NOT_BORROWED_BY_YOU`, `409 RENEW_LIMIT`, `409 RETRY` (renewed twice at the same moment; retry).
 
 ### `POST /return` 🔒
 

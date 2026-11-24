@@ -14,6 +14,34 @@ const branchName = (b) => NAMES[b] || b;
 const day = (d) => new Date(d).toLocaleDateString("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Toronto" });
 const heldMsg = (title, home, until) => `“${title}” is on hold for you at ${branchName(home)} until ${day(until)}.`;
 
+const MAX_BOOKS = 3; // borrowed + on hold, per patron
+const MAX_RENEWALS = 2;
+
+// Copies this patron has in hand at this branch: borrowed by them or waiting on hold for them.
+const inHandFilter = (userId) => ({
+  currentBranch: env.branchId,
+  $or: [{ status: "BORROWED", borrowedBy: userId }, { status: "ON_HOLD", heldFor: userId }],
+});
+
+// shortcut: count-then-act, so two simultaneous requests can both pass at 2 books; fine for patrons, add a per-user lock if it matters.
+async function assertUnderLimit(userId) {
+  if ((await Library.countDocuments(inHandFilter(userId))) >= MAX_BOOKS) {
+    throw AppError.conflict(`You can have at most ${MAX_BOOKS} books borrowed or on hold. Return one or cancel a hold first.`, "LIMIT_REACHED");
+  }
+}
+
+// A copy that belongs to another branch goes back there; if that branch is down it stays available here.
+async function sendToOrigin(book, isbn10, message) {
+  const origin = book.originBranch;
+  if (!origin || origin === env.branchId) return { message, book, routedTo: null };
+  try {
+    const transfer = await transferSaga.executeTransfer({ isbn10, targetBranch: origin });
+    return { message: `${message} It's going back to ${branchName(origin)}.`, routedTo: origin, transfer };
+  } catch (err) {
+    return { message, book, routedTo: null, warning: `Could not send it home to ${origin} yet (${err.message}); it stays available here.` };
+  }
+}
+
 const requireIsbn = (body) => {
   const { isbn10 } = body || {};
   if (typeof isbn10 !== "string" || !isbn10) throw AppError.badRequest("isbn10 is required");
@@ -56,6 +84,7 @@ exports.requestTransfer = async (req, res, next) => {
     if (alreadyHeld) {
       return res.status(200).json({ status: "ON_HOLD", message: heldMsg(alreadyHeld.title, home, alreadyHeld.holdExpiresAt), branch: home, holdExpiresAt: alreadyHeld.holdExpiresAt, book: alreadyHeld });
     }
+    await assertUnderLimit(userId);
 
     // On the shelf here: hold it for this patron (atomic, so two requesters can't both get it).
     const heldHere = await Library.findOneAndUpdate(
@@ -109,6 +138,10 @@ exports.checkout = async (req, res, next) => {
   try {
     const isbn10 = requireIsbn(req.body);
     const { userId } = req.user;
+    // Checking out your own hold doesn't add a book; taking one off the shelf does.
+    if (!(await Library.exists({ isbn10, currentBranch: env.branchId, status: "ON_HOLD", heldFor: userId }))) {
+      await assertUnderLimit(userId);
+    }
     const lamport = await stampFor(isbn10);
 
     const book = await Library.findOneAndUpdate(
@@ -179,22 +212,79 @@ exports.returnBook = async (req, res, next) => {
     );
     const late = Boolean(loan?.dueAt && loan.dueAt < new Date());
 
-    const origin = book.originBranch;
     const thanks = `Thanks for returning “${book.title}”${late ? " (it was overdue)" : ""}.`;
-    if (!origin || origin === env.branchId) return res.status(200).json({ message: thanks, book, late, routedTo: null });
+    res.status(200).json({ ...(await sendToOrigin(book, isbn10, thanks)), late });
+  } catch (err) {
+    next(err);
+  }
+};
 
-    try {
-      const transfer = await transferSaga.executeTransfer({ isbn10, targetBranch: origin });
-      res.status(200).json({ message: `${thanks} It's going back to ${branchName(origin)}.`, late, routedTo: origin, transfer });
-    } catch (err) {
-      res.status(200).json({
-        message: thanks,
-        book,
-        late,
-        routedTo: null,
-        warning: `Could not send it home to ${origin} yet (${err.message}); it stays available here.`,
-      });
+// POST /api/circulation/renew { isbn10 }: +LOAN_DAYS from the later of the due date and now, at most MAX_RENEWALS times.
+exports.renewLoan = async (req, res, next) => {
+  try {
+    const isbn10 = requireIsbn(req.body);
+    const { userId } = req.user;
+    const loan = await Loan.findOne({ isbn10, userId, branch: env.branchId, status: "ACTIVE" });
+    if (!loan) throw AppError.conflict(`You don't have '${isbn10}' checked out here`, "NOT_BORROWED_BY_YOU");
+    if (loan.renewCount >= MAX_RENEWALS) {
+      throw AppError.conflict(`This book has already been renewed ${MAX_RENEWALS} times. Please return it.`, "RENEW_LIMIT");
     }
+
+    const dueAt = new Date(Math.max(loan.dueAt.getTime(), Date.now()) + env.loanDays * 86_400_000);
+    // Matching on the old dueAt means two simultaneous renewals can't both count.
+    const renewed = await Loan.findOneAndUpdate(
+      { _id: loan._id, status: "ACTIVE", dueAt: loan.dueAt },
+      { $set: { dueAt }, $inc: { renewCount: 1 } },
+      { returnDocument: "after" },
+    );
+    if (!renewed) throw AppError.conflict("This loan just changed, try again", "RETRY");
+
+    const book = await Library.findOne({ isbn10, currentBranch: env.branchId }, { title: 1 }).lean();
+    res.status(200).json({
+      message: `Renewed “${book?.title ?? isbn10}”. It's now due ${day(dueAt)}.`,
+      loan: renewed,
+      renewalsLeft: MAX_RENEWALS - renewed.renewCount,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/circulation/holds/cancel { isbn10 }: release a hold; a copy from another branch is sent back there.
+exports.cancelHold = async (req, res, next) => {
+  try {
+    const isbn10 = requireIsbn(req.body);
+    const { userId } = req.user;
+    const book = await Library.findOneAndUpdate(
+      { isbn10, currentBranch: env.branchId, status: "ON_HOLD", heldFor: userId },
+      { $set: { status: "AVAILABLE", heldFor: null, holdExpiresAt: null } },
+      { returnDocument: "after" },
+    );
+    if (!book) {
+      const exists = await Library.exists({ isbn10, currentBranch: env.branchId });
+      throw exists
+        ? AppError.conflict(`'${isbn10}' is not on hold for you here`, "NOT_HELD_FOR_YOU")
+        : AppError.notFound(`Book '${isbn10}' is not held at branch '${env.branchId}'`, "BOOK_NOT_FOUND");
+    }
+    res.status(200).json(await sendToOrigin(book, isbn10, `Your hold on “${book.title}” is cancelled.`));
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/circulation/me/books: every copy this patron has borrowed or on hold here, with its active loan.
+exports.myBooks = async (req, res, next) => {
+  try {
+    const { userId } = req.user;
+    const [copies, loans] = await Promise.all([
+      Library.find(inHandFilter(userId), { custodyHistory: 0 }).lean(),
+      Loan.find({ userId, branch: env.branchId, status: "ACTIVE" }).lean(),
+    ]);
+    const books = copies.map((copy) => ({
+      ...copy,
+      loan: copy.status === "BORROWED" ? loans.find((l) => l.isbn10 === copy.isbn10) ?? null : null,
+    }));
+    res.status(200).json({ books, maxBooks: MAX_BOOKS, maxRenewals: MAX_RENEWALS });
   } catch (err) {
     next(err);
   }

@@ -3,6 +3,18 @@ import { authFetch } from "./client";
 
 const BRANCHES = ["ajax", "oshawa", "whitby"];
 
+// POST /api/circulation/<action> { isbn10 } for "checkout", "return", "renew", "holds/cancel", "requests".
+// Resolves to the backend's body (show its `message`); rejects with its error text.
+export async function circulationAction(action, isbn10) {
+  const res = await authFetch(`/api/circulation/${action}`, {
+    method: "POST",
+    body: JSON.stringify({ isbn10 }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
 export async function fetchAllBranchCatalogs() {
   const homeBranch = localStorage.getItem("homeBranch");
 
