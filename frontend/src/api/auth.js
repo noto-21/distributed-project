@@ -13,18 +13,6 @@ export function clearSession() {
   localStorage.removeItem("homeBranch");
 }
 
-// Revoke the refresh token on the server too; local sign-out happens even if that call fails.
-export async function logout() {
-  const refreshToken = localStorage.getItem("refreshToken");
-  clearSession();
-  if (!refreshToken) return;
-  await fetch("/api/auth/logout", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken }),
-  }).catch(() => {});
-}
-
 async function postAuth(path, body, fallbackError) {
   const res = await fetch(`/api/auth/${path}`, {
     method: "POST",
@@ -46,7 +34,6 @@ export function register({ name, email, password, homeBranch }) {
   return postAuth("register", { name, email, password, homeBranch }, "Sign up failed.");
 }
 
-// Full-page navigation, not fetch: Google redirects back to /auth/callback.
 export function startGoogleSignIn(homeBranch) {
   if (!BRANCH_OPTIONS.includes(homeBranch)) throw new Error("Choose your home branch.");
   window.location.href = `/api/auth/google?homeBranch=${homeBranch}`;

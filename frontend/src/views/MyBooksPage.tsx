@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { authFetch } from "../api/client";
-import { logout } from "../api/auth";
+import { clearSession } from "../api/auth";
 import { circulationAction } from "../api/circulation";
 import { useBranchCatalog } from "../recommendations/useBranchCatalog";
 import { recommendBooks } from "../recommendations/recommendations";
@@ -192,8 +192,8 @@ export default function MyBooksPage() {
     return () => { cancelled = true; };
   }, []);
 
-  async function handleLogout() {
-    await logout();
+  function handleLogout() {
+    clearSession();
     navigate("/login", { replace: true });
   }
 
