@@ -1,4 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { BRANCH_OPTIONS, register } from "../api/auth";
 
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
 const action = "w-full rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]";
@@ -8,39 +11,24 @@ export default function SignupPage() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [homeBranch, setHomeBranch] = useState("");
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-      document.title = "Sign Up | Durham Library";
-    }, []);
+  const navigate = useNavigate();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError("");
     setLoading(true);
 
     try {
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: username.trim(),
-          email,
-          password,
-        }),
+      // register() can throw before any request (no branch picked), so wrap it in a promise for toast.promise.
+      await toast.promise(Promise.resolve().then(() => register({ name: username.trim(), email, password, homeBranch })), {
+        loading: "Creating your account…",
+        success: "Welcome to DurhamLibrary!",
+        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
       });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.error ?? "Sign up failed.");
-      }
-
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("refreshToken", data.refreshToken);
-      window.location.href = "/";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      navigate("/", { replace: true });
+    } catch {
+      // The error toast already says what happened.
     } finally {
       setLoading(false);
     }
@@ -50,14 +38,14 @@ export default function SignupPage() {
     <div className="min-h-screen bg-[#dff5f5] p-3 font-serif text-[#171717] sm:p-5">
       <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl bg-[#dce5f6] shadow-md">
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
-          <a href="/" className="text-2xl font-bold">
+          <Link to="/" className="text-2xl font-bold">
             <span className="text-[#4f82f6]">Durham</span>Library
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
             <span>Already Have an Account?</span>
-            <a href="/login" className="rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]">
+            <Link to="/login" className="rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]">
               Log In?
-            </a>
+            </Link>
           </div>
         </header>
 
@@ -103,7 +91,21 @@ export default function SignupPage() {
                 />
               </label>
 
-              {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
+              <label className="block font-bold">
+                Home Branch
+                <select
+                  required
+                  className={`${field} mt-1 font-normal`}
+                  value={homeBranch}
+                  onChange={(event) => setHomeBranch(event.target.value)}
+                >
+                  <option value="" disabled>Choose a branch</option>
+                  {BRANCH_OPTIONS.map((branch) => (
+                    <option key={branch} value={branch}>{branch[0].toUpperCase() + branch.slice(1)}</option>
+                  ))}
+                </select>
+              </label>
+
 
               <button type="submit" className={action} disabled={loading}>
                 {loading ? "Signing up..." : "Sign Up"}

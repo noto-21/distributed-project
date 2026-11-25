@@ -1,3 +1,60 @@
+import React, { useEffect, useMemo, useState, type MouseEventHandler } from "react";
+import { Link } from "react-router-dom";
+import toast from "react-hot-toast";
+import { clearSession } from "../api/auth";
+import { useBranchCatalog } from "../recommendations/useBranchCatalog";
+import type { CatalogBook } from "../recommendations/recommendations";
+import BookDetails, { BookCover, branches, type Branch } from "./BookDetails";
+
+type Status = "Available" | "Checked out" | "On hold" | "In transit" | "No copy" | "Branch unreachable";
+// One title across the three branches: its first copy's details plus each branch's status.
+type Edition = CatalogBook & { holdings: Record<Branch, Status> };
+
+const statusLabel: Record<string, Status> = {
+  AVAILABLE: "Available",
+  BORROWED: "Checked out",
+  ON_HOLD: "On hold",
+  IN_TRANSIT: "In transit",
+};
+
+// Copies come from every branch database; group them by ISBN-10.
+function toEditions(catalog: CatalogBook[], offline: string[]): Edition[] {
+  const byIsbn = new Map<string, Edition>();
+  for (const copy of catalog) {
+    const id = copy.currentBranch ?? "";
+    const branch = branches.find(name => name.toLowerCase() === id);
+    if (!branch) continue;
+    const edition = byIsbn.get(copy.isbn10) ?? {
+      ...copy,
+      holdings: Object.fromEntries(
+        branches.map(name => [name, offline.includes(name.toLowerCase()) ? "Branch unreachable" : "No copy"]),
+      ) as Record<Branch, Status>,
+    };
+    // Several copies at one branch: an available one wins.
+    if (edition.holdings[branch] !== "Available") edition.holdings[branch] = statusLabel[copy.status ?? ""] ?? "Checked out";
+    byIsbn.set(copy.isbn10, edition);
+  }
+  return [...byIsbn.values()];
+}
+
+const normalizeIsbn10 = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
+const isIsbn10 = (value: string) => /^\d{9}[\dX]$/.test(normalizeIsbn10(value));
+
+// shortcut: filters the loaded branch catalogs in the browser; add a server search endpoint if catalogs grow to thousands of books.
+function searchEditions(editions: Edition[], query: string) {
+  const text = query.trim().toLowerCase();
+  if (!text) return [];
+  if (isIsbn10(query)) return editions.filter(book => book.isbn10.toUpperCase() === normalizeIsbn10(query));
+
+  const words = text.split(/\s+/);
+  return editions.filter(book => {
+    const searchable = [book.title, book.subtitle, ...(book.author ?? []), book.categories]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return words.every(word => searchable.includes(word));
+  });
+}
 import React, { useEffect, useState, type MouseEventHandler } from "react";
 import { branches, findEdition, getFeaturedBooks, isIsbn10, lookupIsbn, searchCatalog } from "../api/catalog";
 import type { Branch, Edition } from "../api/catalog";
@@ -13,16 +70,14 @@ function readSearchLocation() {
   return {
     query: params.get("q")?.trim() ?? "",
     bookIsbn: params.get("book"),
-    liveBook: params.get("source") === "live",
     fromFeatured: params.get("source") === "featured",
   };
 }
 
-export function searchUrl(query: string, isbn10?: string, live = false) {
+export function searchUrl(query: string, isbn10?: string) {
   const params = new URLSearchParams();
   if (query) params.set("q", query);
   if (isbn10) params.set("book", isbn10);
-  if (live) params.set("source", "live");
   return params.size ? `/search?${params}` : "/search";
 }
 
@@ -78,10 +133,10 @@ function EditionCard({ book, query, onNavigate }: {
   return (
     <article className={panel}>
       <div className="flex flex-wrap items-start gap-3 pb-3">
-        <BookCover book={book} color={book.color} className="h-20 w-14" />
+        <BookCover book={book} className="h-20 w-14" />
         <div className="min-w-36 flex-1">
           <h3 className="text-xl font-bold">{book.title}</h3>
-          <p>{book.authors.join(", ")}</p>
+          <p>{(book.author ?? []).join(", ")}</p>
           <p className="text-sm text-slate-600">{book.subtitle}</p>
         </div>
         <span className={available ? "rounded bg-green-100 px-2 py-1 text-sm text-green-900" : "rounded bg-amber-100 px-2 py-1 text-sm text-amber-900"}>
@@ -113,98 +168,10 @@ function EditionCard({ book, query, onNavigate }: {
   );
 }
 
-function IsbnResults({ query, showDetails = false, onNavigate }: {
-  query: string;
-  showDetails?: boolean;
-  onNavigate: MouseEventHandler<HTMLAnchorElement>;
-}) {
-  const [result, setResult] =
-    useState<Awaited<ReturnType<typeof lookupIsbn>> | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let ignore = false;
-
-    lookupIsbn(query)
-      .then(data => {
-        if (!ignore) setResult(data);
-      })
-      .catch(() => {
-        if (!ignore) setError("Could not reach the catalog. Check that the backend is running.");
-      });
-
-    return () => {
-      ignore = true;
-    };
-  }, [query]);
-
-  const book = result?.foundAt[0]?.book;
-  const sampleBook = !showDetails && error ? findEdition(query) : undefined;
-  if (showDetails && result && book) {
-    const holdings = branches.map(branch => {
-      const id = branch.toLowerCase();
-      let status = "No available copy";
-      if (result.foundAt.some(match => match.branch === id)) {
-        status = "Available";
-      } else if (result.offline.includes(id as Lowercase<Branch>)) {
-        status = "Branch unreachable";
-      } else if (result.source === "local") {
-        status = "Not checked";
-      }
-      return { branch, status };
-    });
-
-    return (
-      <BookDetails
-        book={book}
-        holdings={holdings}
-        warning={result.warning}
-      />
-    );
-  }
-
-  return (
-    <section className={`${panel} mt-5`} aria-labelledby="isbn-results">
-      <h2 id="isbn-results" className="text-xl font-bold">Live ISBN Results</h2>
-
-      {error && <p role="alert">{error}</p>}
-      {sampleBook && (
-        <div className="mt-2">
-          <p className="mb-2 text-sm">Sample catalog match</p>
-          <EditionCard book={sampleBook} query={query} onNavigate={onNavigate} />
-        </div>
-      )}
-      {!result && !error && <p role="status">Checking availability…</p>}
-
-      {result && (
-        <>
-          {result.warning && <p role="status">{result.warning}</p>}
-
-          {result.foundAt.length === 0 ? (
-            <p>No available copies were found for ISBN {result.isbn10}.</p>
-          ) : (
-            <ul className="mt-2 space-y-2">
-              {result.foundAt.map(({ branch, book }) => (
-                <li key={branch}>
-                  <strong>{book.title}</strong>
-                  <p>{book.authors.join(", ")}</p>
-                  <p className="capitalize">Available at {branch}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-          {!showDetails && book && (
-            <a href={searchUrl(query, result.isbn10, true)} onClick={onNavigate} className="mt-3 inline-block underline">
-              View details
-            </a>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
 export default function SearchPage() {
-  const [{ query, bookIsbn, liveBook, fromFeatured }, setLocation] = useState(readSearchLocation);
+  const [{ query, bookIsbn, fromFeatured }, setLocation] = useState(readSearchLocation);
+  const { catalog, loading: catalogLoading, message: catalogMessage, offline } = useBranchCatalog();
+  const editions = useMemo(() => toEditions(catalog, offline), [catalog, offline]);
   const [draft, setDraft] = useState(query);
   const [history, setHistory] = useState(readHistory);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -236,9 +203,9 @@ export default function SearchPage() {
   }, []);
 
   function logOut() {
-    localStorage.removeItem("token");
-    localStorage.removeItem("refreshToken");
+    clearSession();
     setSignedIn(false);
+    toast.success("You're logged out.");
   }
 
   const navigateSearch: MouseEventHandler<HTMLAnchorElement> = event => {
@@ -257,7 +224,7 @@ export default function SearchPage() {
     const next = value.trim();
     if (!next) return;
     if (next !== query || bookIsbn) window.history.pushState(null, "", searchUrl(next));
-    setLocation({ query: next, bookIsbn: null, liveBook: false, fromFeatured: false });
+    setLocation({ query: next, bookIsbn: null });
     setDraft(next);
     setHistoryOpen(false);
     const recent = [next, ...history.filter(item => item.toLowerCase() !== next.toLowerCase())].slice(0, 8);
@@ -269,15 +236,16 @@ export default function SearchPage() {
     }
   }
   const returnToSearch = Boolean(query) || fromFeatured;
-  const isIsbnSearch = isIsbn10(query);
   const matchingHistory = history.filter(item =>
     draft === query || item.toLowerCase().includes(draft.trim().toLowerCase()),
   );
-  const selectedBook = bookIsbn && !liveBook ? findEdition(bookIsbn) : undefined;
+  const selectedBook = bookIsbn
+    ? editions.find(book => book.isbn10.toUpperCase() === normalizeIsbn10(bookIsbn))
+    : undefined;
   const selectedBranches = selectedLibraries.length ? selectedLibraries : branches;
 
   const results = query
-    ? searchCatalog(query).filter(book =>
+    ? searchEditions(editions, query).filter(book =>
         selectedBranches.some(location =>
           availableOnly
             ? book.holdings[location] === "Available"
@@ -291,16 +259,17 @@ export default function SearchPage() {
     <div className="min-h-screen bg-[#dff5f5] p-3 font-serif text-[#171717] sm:p-5">
       <div className="mx-auto max-w-7xl overflow-hidden rounded-2xl bg-[#dce5f6] shadow-md">
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
-          <a href="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</a>
+          <Link to="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</Link>
           <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-5">
+            <Link to="/">Home</Link>
             <a href="/#my-books">My Books</a>
-            <a href="/search" className="underline" aria-current="page">Search</a>
+            <Link to="/search" className="underline" aria-current="page">Search</Link>
             {signedIn ? (
               <button type="button" className={action} onClick={logOut}>Log Out</button>
             ) : (
               <>
-                <a href="/login" className="underline">Log In</a>
-                <a href="/signup" className="underline">Sign Up</a>
+                <Link to="/login" className="underline">Log In</Link>
+                <Link to="/signup" className="underline">Sign Up</Link>
               </>
             )}
           </nav>
@@ -370,14 +339,14 @@ export default function SearchPage() {
               >
                 {query ? "Back to search results" : returnToSearch ? "Back to search" : "Back to home"}
               </a>
-              {liveBook ? (
-                <IsbnResults key={`details:${bookIsbn}`} query={bookIsbn} showDetails onNavigate={navigateSearch} />
-              ) : selectedBook ? (
+              {selectedBook ? (
                 <BookDetails
                   book={selectedBook}
-                  color={selectedBook.color}
                   holdings={branches.map(branch => ({ branch, status: selectedBook.holdings[branch] }))}
+                  warning={catalogMessage || undefined}
                 />
+              ) : catalogLoading ? (
+                <p className={`${panel} mt-3`} role="status">Loading book details…</p>
               ) : (
                 <section className={`${panel} mt-3`}>
                   <h1 className="text-xl font-bold">Book details unavailable</h1>
@@ -387,9 +356,7 @@ export default function SearchPage() {
             </>
           ) : (
             <>
-              {isIsbnSearch ? (
-                <IsbnResults key={`results:${query}`} query={query} onNavigate={navigateSearch} />
-              ) : query ? (
+              {query ? (
                 <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_15rem]">
                   <section aria-labelledby="results-heading">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -398,7 +365,12 @@ export default function SearchPage() {
                         <option value="relevance">Sort by relevance</option><option value="title">Sort by title</option>
                       </select>
                     </div>
-                    <p className="my-2 text-sm" role="status">{results.length} {results.length === 1 ? "match" : "matches"} for “{query}” · Sample catalog</p>
+                    <p className="my-2 text-sm" role="status">
+                      {catalogLoading
+                        ? "Loading the catalog from all libraries…"
+                        : `${results.length} ${results.length === 1 ? "match" : "matches"} for “${query}” · All libraries`}
+                    </p>
+                    {catalogMessage && <p className="mb-2 rounded-md bg-amber-100 p-2 text-sm text-amber-900">{catalogMessage}</p>}
                     <div className="space-y-3">
                       {results.length ? results.map(book => <EditionCard key={book.isbn10} book={book} query={query} onNavigate={navigateSearch} />) :
                         <p className={panel}>No matching results. Try another title, author, category, or ISBN-10, or clear the filters.</p>}

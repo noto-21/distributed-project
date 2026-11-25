@@ -280,6 +280,88 @@ describe("checkout, return, loans and custody history", () => {
     expect((await Library.findOne({ isbn10: "TEST-CR-013" })).status).toBe("AVAILABLE");
   });
 
+  test("/me/books returns borrowed copies with their loan and held copies without one", async () => {
+    await makeBook("TEST-CR-020");
+    await makeBook("TEST-CR-021", { status: "ON_HOLD", heldFor: "pat-1", holdExpiresAt: new Date(Date.now() + 86_400_000) });
+    await makeBook("TEST-CR-022", { status: "ON_HOLD", heldFor: "someone-else" });
+    await post("checkout", "TEST-CR-020");
+
+    const res = await request(app).get("/api/circulation/me/books").set("Authorization", patron());
+
+    expect(res.status).toBe(200);
+    const byIsbn = Object.fromEntries(res.body.books.map((b) => [b.isbn10, b]));
+    expect(Object.keys(byIsbn).sort()).toEqual(["TEST-CR-020", "TEST-CR-021"]);
+    expect(byIsbn["TEST-CR-020"]).toMatchObject({ status: "BORROWED", title: "Copy TEST-CR-020", loan: { status: "ACTIVE", renewCount: 0 } });
+    expect(byIsbn["TEST-CR-021"]).toMatchObject({ status: "ON_HOLD", loan: null });
+    expect(res.body).toMatchObject({ maxBooks: 3, maxRenewals: 2 });
+  });
+
+  test("renew adds LOAN_DAYS to the current date, twice at most", async () => {
+    await makeBook("TEST-CR-023");
+    const due0 = new Date((await post("checkout", "TEST-CR-023")).body.loan.dueAt).getTime();
+
+    const before = Date.now();
+    const first = await post("renew", "TEST-CR-023");
+    expect(first.status).toBe(200);
+    
+    const after = Date.now();
+
+    const actualDueAt = new Date(first.body.loan.dueAt).getTime();
+    const expectedOffset = env.loanDays * 86_400_000;
+
+    expect(actualDueAt).toBeGreaterThanOrEqual(before + expectedOffset);
+    expect(actualDueAt).toBeLessThanOrEqual(after + expectedOffset);
+    expect(first.body).toMatchObject({ renewalsLeft: 1 });
+    expect(first.body.message.startsWith("Renewed “Copy TEST-CR-023”. It's now due ")).toBe(true);
+
+    expect((await post("renew", "TEST-CR-023")).body.renewalsLeft).toBe(0);
+    const third = await post("renew", "TEST-CR-023");
+    expect(third.status).toBe(409);
+    expect(third.body.code).toBe("RENEW_LIMIT");
+    expect((await post("renew", "TEST-CR-023", patron("oshawa", "mallory"))).body.code).toBe("NOT_BORROWED_BY_YOU");
+  });
+
+  test("an overdue renewal counts from today", async () => {
+    await makeBook("TEST-CR-024");
+    await post("checkout", "TEST-CR-024");
+    await Loan.updateOne({ isbn10: "TEST-CR-024" }, { $set: { dueAt: new Date(Date.now() - 5 * 86_400_000) } });
+
+    const res = await post("renew", "TEST-CR-024");
+
+    expect(new Date(res.body.loan.dueAt).getTime()).toBeGreaterThan(Date.now() + (env.loanDays - 1) * 86_400_000);
+  });
+
+  test("cancelling a hold on a transferred-in copy sends it back to its origin", async () => {
+    await makeBook("TEST-CR-025", { status: "ON_HOLD", heldFor: "pat-1", originBranch: "ajax" });
+    fake.ajax.behave = (req) => (req.url === "/internal/transfers/receive" ? [201, { message: "ok" }] : [404, {}]);
+
+    expect((await post("holds/cancel", "TEST-CR-025", patron("oshawa", "mallory"))).body.code).toBe("NOT_HELD_FOR_YOU");
+    const res = await post("holds/cancel", "TEST-CR-025");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ routedTo: "ajax", message: "Your hold on “Copy TEST-CR-025” is cancelled. It's going back to Ajax." });
+    expect(await Library.findOne({ isbn10: "TEST-CR-025" })).toBeNull();
+  });
+
+  test("cancelling a hold on a local copy puts it back on the shelf", async () => {
+    await makeBook("TEST-CR-026", { status: "ON_HOLD", heldFor: "pat-1" });
+    const res = await post("holds/cancel", "TEST-CR-026");
+    expect(res.body.routedTo).toBeNull();
+    expect(await Library.findOne({ isbn10: "TEST-CR-026" }).lean()).toMatchObject({ status: "AVAILABLE", heldFor: null });
+  });
+
+  test("a 4th book is refused, but checking out your own hold at the limit is fine", async () => {
+    for (const isbn of ["TEST-CR-027", "TEST-CR-028"]) { await makeBook(isbn); await post("checkout", isbn); }
+    await makeBook("TEST-CR-029", { status: "ON_HOLD", heldFor: "pat-1" });
+    await makeBook("TEST-CR-030");
+
+    const fourthCheckout = await post("checkout", "TEST-CR-030");
+    expect(fourthCheckout.status).toBe(409);
+    expect(fourthCheckout.body.code).toBe("LIMIT_REACHED");
+    expect((await post("requests", "TEST-CR-030")).body.code).toBe("LIMIT_REACHED");
+    expect((await post("checkout", "TEST-CR-029")).status).toBe(200); // hold -> loan: still 3
+  });
+
   test("manual transfers are librarian-only", async () => {
     await makeBook("TEST-CR-014");
     const body = { isbn10: "TEST-CR-014", targetBranch: "ajax" };

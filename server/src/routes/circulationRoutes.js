@@ -18,6 +18,9 @@ router.post("/checkout", ...home, circulationController.checkout);
 router.post("/return", ...home, circulationController.returnBook);
 router.get("/loans/me", ...home, circulationController.myLoans);
 router.get("/holds/me", ...home, circulationController.myHolds);
+router.get("/me/books", ...home, circulationController.myBooks); // My Books page: borrowed + held copies with loans
+router.post("/renew", ...home, circulationController.renewLoan);
+router.post("/holds/cancel", ...home, circulationController.cancelHold);
 router.get("/loans/overdue", ...home, requireRole("librarian"), circulationController.overdueLoans); // librarian's own branch
 router.post("/transfers", ...home, requireRole("librarian"), circulationController.transferBook); // librarian push
 

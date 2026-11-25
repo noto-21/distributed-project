@@ -3,9 +3,11 @@
 export type CatalogBook = {
   isbn10: string;
   title: string;
+  subtitle?: string;
   author?: string[];
   categories?: string;
   thumbnail?: string;
+  description?: string;
   average_rating?: number;
   ratings_count?: number;
   currentBranch?: string;

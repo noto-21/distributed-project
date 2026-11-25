@@ -1,4 +1,9 @@
 import React, { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { authFetch } from "../api/client";
+import { clearSession } from "../api/auth";
+import { circulationAction } from "../api/circulation";
+import toast from "react-hot-toast";
 import { useBranchCatalog } from "../recommendations/useBranchCatalog";
 import { recommendBooks } from "../recommendations/recommendations";
 
@@ -32,15 +37,31 @@ type Loan = {
   status: "ACTIVE" | "RETURNED";
   createdAt: string;
   dueAt: string;
+  renewCount?: number;
 };
 
 // The My Books view combines catalog details with a user's loan (if any).
 type MyBook = LibraryBook & { loan: Loan | null };
 
 // Rules shared throughout the page.
-const MAX_BOOKS = 3;
+const MAX_BOOKS = 3; // the backend enforces both limits too
+const MAX_RENEWALS = 2;
+
+// Loading toast text for each button while the server works.
+const actionLoading = {
+  checkout: "Checking out…",
+  return: "Returning…",
+  renew: "Renewing…",
+  "holds/cancel": "Cancelling hold…",
+};
 const ONE_DAY = 24 * 60 * 60 * 1000;
-const LOAN_DAYS = 14;
+
+async function getJson(url: string) {
+  const res = await authFetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data;
+}
 
 // One staff recommendation.
 const staffPicks = [
@@ -150,60 +171,48 @@ export default function MyBooksPage() {
   }, []);
 
 
-  // Sample account. 
-  const username = "Cameron";
-  const homeBranch = "Oshawa";
+  const navigate = useNavigate();
+  const [username, setUsername] = useState("");
+  const [homeBranch, setHomeBranch] = useState(() => localStorage.getItem("homeBranch") ?? "");
 
   // Store the current time so the page can update as deadlines pass.
   const [now, setNow] = useState(() => Date.now());
 
-  // Sample data ONLY: the fields now match the library catalog, and dates
-  // live in a separate loan object. Replace the demo records with API data later.
-  const [books, setBooks] = useState<MyBook[]>(() => [
-    {
-      _id: "mock-little-women",
-      isbn10: "0147514010",
-      title: "Little Women",
-      author: ["Louisa May Alcott"],
-      categories: "Classic fiction",
-      currentBranch: homeBranch.toLowerCase(),
-      originBranch: homeBranch.toLowerCase(),
-      status: "BORROWED",
-      loan: {
-        isbn10: "0147514010",
-        status: "ACTIVE",
-        createdAt: new Date(now - 12 * ONE_DAY).toISOString(),
-        dueAt: new Date(now + 2 * ONE_DAY).toISOString(),
-      },
-    },
-    {
-      _id: "mock-hobbit",
-      isbn10: "054792822X",
-      title: "The Hobbit",
-      author: ["J. R. R. Tolkien"],
-      categories: "Fantasy",
-      currentBranch: homeBranch.toLowerCase(),
-      originBranch: homeBranch.toLowerCase(),
-      status: "BORROWED",
-      loan: {
-        isbn10: "054792822X",
-        status: "ACTIVE",
-        createdAt: new Date(now - 16 * ONE_DAY).toISOString(),
-        dueAt: new Date(now - 2 * ONE_DAY).toISOString(),
-      },
-    },
-    {
-      _id: "mock-pride-and-prejudice",
-      isbn10: "0141439513",
-      title: "Pride and Prejudice",
-      author: ["Jane Austen"],
-      categories: "Classic fiction",
-      currentBranch: homeBranch.toLowerCase(),
-      originBranch: homeBranch.toLowerCase(),
-      status: "BORROWED",
-      loan: null, // Demo case: loan details have not loaded yet.
-    },
-  ]);
+  // Borrowed and held copies from GET /api/circulation/me/books.
+  const [books, setBooks] = useState<MyBook[]>([]);
+  const [booksLoading, setBooksLoading] = useState(true);
+  const [booksError, setBooksError] = useState("");
+
+  const [busyIsbn, setBusyIsbn] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([getJson("/api/auth/me"), getJson("/api/circulation/me/books")])
+      .then(([me, mine]) => {
+        if (cancelled) return;
+        setUsername(me.user.name || me.user.email);
+        setHomeBranch(me.user.homeBranch);
+        setBooks(mine.books);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const text = err instanceof Error ? err.message : "Could not load your books.";
+        setBooksError(text);
+        toast.error(text, { id: "my-books-load" });
+      })
+      .finally(() => {
+        if (!cancelled) setBooksLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, []);
+
+  function handleLogout() {
+    clearSession();
+    toast.success("You're logged out.");
+    navigate("/login", { replace: true });
+  }
 
   // Check the time once per second.
   useEffect(() => {
@@ -231,91 +240,25 @@ export default function MyBooksPage() {
 
 
 
-  // Borrow a book only when it is ready at the home library.
-  function checkoutBook(bookId: string) {
-    const checkoutTime = Date.now();
-    setNow(checkoutTime);
-
-    setBooks((currentBooks) => {
-      const currentBorrowedCount = currentBooks.filter(
-        (book) => book.status === "BORROWED"
-      ).length;
-
-      if (currentBorrowedCount >= MAX_BOOKS) {
-        return currentBooks;
-      }
-
-      return currentBooks.map((book): MyBook => {
-        // Check the selected book's status and location.
-        if (
-          book._id === bookId &&
-          book.status === "AVAILABLE" &&
-          book.currentBranch.toLowerCase() === homeBranch.toLowerCase()
-        ) {
-          return {
-            ...book,
-            status: "BORROWED",
-            loan: {
-              isbn10: book.isbn10,
-              status: "ACTIVE",
-              createdAt: new Date(checkoutTime).toISOString(),
-              dueAt: new Date(checkoutTime + LOAN_DAYS * ONE_DAY).toISOString(),
-            },
-          };
-        }
-
-        // Leave every other book unchanged.
-        return book;
+  // Checkout, return, renew or cancel on the server, then reload the list so it matches the server.
+  async function runAction(action: keyof typeof actionLoading, isbn10: string) {
+    setBusyIsbn(isbn10);
+    try {
+      await toast.promise(circulationAction(action, isbn10), {
+        loading: actionLoading[action],
+        success: (data: { message: string; warning?: string }) => [data.message, data.warning].filter(Boolean).join(" "),
+        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
       });
-    });
-  }
-
-  // Remove a borrowed book and free its slot.
-  function returnBook(bookId: string) {
-    setBooks((currentBooks) =>
-      currentBooks.filter(
-        (book) => book._id !== bookId || book.status !== "BORROWED"
-      )
-    );
-  }
-
-  // Remove a request that has not been checked out.
-  function cancelRequest(bookId: string) {
-    setBooks((currentBooks) =>
-      currentBooks.filter(
-        (book) => book._id !== bookId || book.status === "BORROWED"
-      )
-    );
-  }
-
-  // Demo rule: add 14 days to the current due date.
-  // For overdue books, give 14 days from today.
-  function renewBook(bookId: string) {
-    const renewalTime = Date.now();
-    setNow(renewalTime);
-
-    setBooks((currentBooks) =>
-      currentBooks.map((book): MyBook => {
-        if (
-          book._id === bookId &&
-          book.status === "BORROWED" &&
-          book.loan !== null
-        ) {
-          return {
-            ...book,
-            loan: {
-              ...book.loan,
-              dueAt: new Date(
-                Math.max(new Date(book.loan.dueAt).getTime(), renewalTime) +
-                LOAN_DAYS * ONE_DAY
-              ).toISOString(),
-            },
-          };
-        }
-
-        return book;
-      })
-    );
+    } catch {
+      // The error toast already says what happened.
+    }
+    try {
+      setBooks((await getJson("/api/circulation/me/books")).books);
+    } catch {
+      toast.error("Could not refresh your books. Reload the page.", { id: "my-books-load" });
+    } finally {
+      setBusyIsbn(null);
+    }
   }
 
   return (
@@ -324,29 +267,24 @@ export default function MyBooksPage() {
 
         {/* Header and navigation. */}
         <header className="flex flex-wrap items-center justify-between gap-4 bg-white px-6 py-4">
-          <a href="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</a>
+          <Link to="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</Link>
 
           <nav
             aria-label="Main navigation"
             className="flex flex-wrap items-center gap-5"
           >
-            <a href="/" className="underline" aria-current="page">
+            <Link to="/" className="underline" aria-current="page">
               Home
-            </a>
+            </Link>
 
-            <a href="/search">Search</a>
+            <Link to="/search">Search</Link>
 
             <span>{username}</span>
 
-            {/* Your teammate will connect logout to the login system. */}
             <button
               type="button"
-              className="cursor-pointer rounded-md bg-[#777170] px-4 py-2 text-white hover:bg-[#655d5d]"
-              onClick={() => {
-                localStorage.removeItem("token");
-                localStorage.removeItem("refreshToken");
-                window.location.href = "/login";
-              }}
+              onClick={handleLogout}
+              className="rounded-md bg-[#777170] px-4 py-2 text-white"
             >
               Log Out
             </button>
@@ -365,17 +303,23 @@ export default function MyBooksPage() {
 
               <div className="mt-5 space-y-4">
 
-                {/* Show this message if all books have been removed. */}
-                {books.length === 0 && (
+                {booksLoading && <p className="text-gray-600">Loading your books...</p>}
+
+                {booksError && (
+                  <p className="text-red-700" role="alert">{booksError}</p>
+                )}
+
+                {/* Show this message if the patron has nothing borrowed or on hold. */}
+                {!booksLoading && !booksError && books.length === 0 && (
                   <div className="rounded-xl border border-gray-400 bg-white p-6">
                     <p>You have no books yet.</p>
 
-                    <a
-                      href="/search"
+                    <Link
+                      to="/search"
                       className="mt-3 inline-block rounded-md bg-[#777170] px-4 py-2 text-white"
                     >
                       Find a book
-                    </a>
+                    </Link>
                   </div>
                 )}
 
@@ -418,7 +362,7 @@ export default function MyBooksPage() {
 
                       <div className="min-w-0 flex-1">
                         <h2 className="text-xl font-bold">{book.title}</h2>
-                        <p>{book.author.join(", ") || "Author unavailable"}</p>
+                        <p>{(book.author ?? []).join(", ") || "Author unavailable"}</p>
 
                         <p className="mt-1 text-sm text-gray-600">
                           {book.categories}
@@ -529,7 +473,7 @@ export default function MyBooksPage() {
                             : book.status === "BORROWED"
                               ? "Checked out"
                               : book.status === "IN_TRANSIT"
-                                ? `Transferring to ${homeBranch}…`
+                                ? `Transferring to ${displayBranch(homeBranch)}…`
                                 : book.status === "ON_HOLD"
                                   ? "On hold"
                                   : atHome
@@ -541,30 +485,30 @@ export default function MyBooksPage() {
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              onClick={() => returnBook(book._id)}
-                              className="rounded-md bg-[#777170] px-4 py-2 text-white"
+                              onClick={() => runAction("return", book.isbn10)}
+                              disabled={busyIsbn !== null}
+                              className="rounded-md bg-[#777170] px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Return
                             </button>
 
                             <button
                               type="button"
-                              onClick={() => renewBook(book._id)}
-                              className="rounded-md border border-[#777170] px-4 py-2 text-[#777170]"
+                              onClick={() => runAction("renew", book.isbn10)}
+                              disabled={busyIsbn !== null || (book.loan?.renewCount ?? 0) >= MAX_RENEWALS}
+                              title={(book.loan?.renewCount ?? 0) >= MAX_RENEWALS ? `Already renewed ${MAX_RENEWALS} times` : undefined}
+                              className="rounded-md border border-[#777170] px-4 py-2 text-[#777170] disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Renew
                             </button>
                           </div>
                         ) : (
                           <div className="flex flex-wrap gap-2">
+                          {/* A hold at the home library can be checked out; the backend re-checks everything. */}
                           <button
                             type="button"
-                            onClick={() => checkoutBook(book._id)}
-                            disabled={
-                              book.status !== "AVAILABLE" ||
-                              !atHome ||
-                              borrowedCount >= MAX_BOOKS
-                            }
+                            onClick={() => runAction("checkout", book.isbn10)}
+                            disabled={busyIsbn !== null || book.status !== "ON_HOLD" || !atHome}
                             className="rounded-md bg-[#777170] px-4 py-2 text-white disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             Checkout
@@ -572,8 +516,9 @@ export default function MyBooksPage() {
 
                             <button
                               type="button"
-                              onClick={() => cancelRequest(book._id)}
-                              className="rounded-md border border-[#777170] px-4 py-2 text-[#777170]"
+                              onClick={() => runAction("holds/cancel", book.isbn10)}
+                              disabled={busyIsbn !== null || book.status !== "ON_HOLD"}
+                              className="rounded-md border border-[#777170] px-4 py-2 text-[#777170] disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               Cancel Request
                             </button>
@@ -654,7 +599,7 @@ export default function MyBooksPage() {
             <section className="rounded-xl border border-gray-400 bg-white p-5">
               <h2 className="text-sm uppercase">Your home library</h2>
 
-              <p className="mt-2 text-2xl font-bold">{homeBranch}</p>
+              <p className="mt-2 text-2xl font-bold">{displayBranch(homeBranch)}</p>
 
               <p className="mt-1 text-sm text-gray-600">
                 Saved to your account.

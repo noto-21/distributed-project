@@ -34,7 +34,7 @@ const parseCsvToObjects = (filePath) => {
           isbn10: row.isbn10?.trim() || '',
           title: row.title?.trim() || '',
           subtitle: row.subtitle?.trim() || undefined,
-          author: parseAuthors(row.author),
+          author: parseAuthors(row.authors),
           categories: row.categories?.trim() || undefined,
           thumbnail: row.thumbnail?.trim() || undefined,
           description: row.description?.trim() || undefined,

@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { finishGoogleSignIn } from "../api/auth";
 
 function errorMessage(code: string) {
   if (code.startsWith("account_at_")) {
@@ -10,6 +13,7 @@ function errorMessage(code: string) {
 
 export default function AuthCallbackPage() {
   const [error, setError] = useState("");
+  const navigate = useNavigate();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.slice(1));
@@ -17,12 +21,21 @@ export default function AuthCallbackPage() {
     const refreshToken = params.get("refreshToken");
     const errorCode = params.get("error");
 
+    // The page text stays as the fallback; the toast is what the user notices. A fixed id stops repeats.
+    const fail = (text: string) => {
+      setError(text);
+      toast.error(text, { id: "google-sign-in" });
+    };
+
     if (token && refreshToken) {
-      localStorage.setItem("token", token);
-      localStorage.setItem("refreshToken", refreshToken);
-      window.location.replace("/");
+      finishGoogleSignIn(token, refreshToken)
+        .then(() => {
+          toast.success("Signed in with Google.", { id: "google-sign-in" });
+          navigate("/", { replace: true });
+        })
+        .catch(() => fail(errorMessage("")));
     } else {
-      setError(errorMessage(errorCode ?? ""));
+      fail(errorMessage(errorCode ?? ""));
     }
   }, []);
 

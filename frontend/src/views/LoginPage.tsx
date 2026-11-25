@@ -1,4 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { BRANCH_OPTIONS, login, startGoogleSignIn } from "../api/auth";
 
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
 const action = "w-full rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]";
@@ -9,36 +12,30 @@ const field = "w-full rounded-md border border-[#9ca8bd] bg-white px-3 py-2";
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     document.title = "Log In | Durham Library";
   }, []);
+  const [googleBranch, setGoogleBranch] = useState("");
+  const navigate = useNavigate();
+  // Back to the protected page that sent us here, if any.
+  const back = (useLocation().state as { from?: { pathname: string; search?: string } } | null)?.from;
+  const from = back ? back.pathname + (back.search ?? "") : "/";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError("");
     setLoading(true);
 
     try {
-        const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+      await toast.promise(login(email, password), {
+        loading: "Logging in…",
+        success: (session: { user?: { name?: string } }) => `Welcome back${session.user?.name ? `, ${session.user.name}` : ""}!`,
+        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
       });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.error ?? "Log in failed.");
-      }
-      
-
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("refreshToken", data.refreshToken);
-      window.location.href = "/";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      navigate(from, { replace: true });
+    } catch {
+      // The error toast already says what happened.
     } finally {
       setLoading(false);
     }
@@ -49,14 +46,14 @@ export default function LoginPage() {
       <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl bg-[#dce5f6] shadow-md">
         
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
-          <a href="/" className="text-2xl font-bold">
+          <Link to="/" className="text-2xl font-bold">
             <span className="text-[#4f82f6]">Durham</span>Library
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
             <span>Don't have an account?</span>
-            <a href="/signup" className="rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]">
+            <Link to="/signup" className="rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]">
               Sign up?
-            </a>
+            </Link>
           </div>
         </header>
 
@@ -89,22 +86,45 @@ export default function LoginPage() {
                 />
               </label>
 
-              {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
               <button type="submit" className={action} disabled={loading}>
                 {loading ? "Logging in..." : "Log In"}
               </button>
             </form>
 
-            <a
-              href="/"
+            <Link
+              to="/search"
               className="mt-4 block w-full rounded-md border border-[#797171] bg-white px-4 py-2 text-center text-[#797171] hover:bg-[#f0eded]"
             >
               Continue as Guest
-            </a>
+            </Link>
 
-            <div className="mt-4 flex items-center gap-2">
-              <span className="font-bold">Log In With</span>
-            <a href="/api/auth/google" aria-label="Log in with Google" className="text-2xl font-bold">G</a>            </div>
+            <div className="mt-4 space-y-2">
+              <label className="block font-bold">
+                Home Branch (for Google)
+                <select
+                  className={`${field} mt-1 font-normal`}
+                  value={googleBranch}
+                  onChange={(event) => setGoogleBranch(event.target.value)}
+                >
+                  <option value="" disabled>Choose a branch</option>
+                  {BRANCH_OPTIONS.map((branch) => (
+                    <option key={branch} value={branch}>{branch[0].toUpperCase() + branch.slice(1)}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="font-bold">Log In With</span>
+                <button
+                  type="button"
+                  aria-label="Log in with Google"
+                  className="text-2xl font-bold disabled:opacity-40"
+                  disabled={!googleBranch}
+                  onClick={() => startGoogleSignIn(googleBranch)}
+                >
+                  G
+                </button>
+              </div>
+            </div>
           </section>
         </main>
 
