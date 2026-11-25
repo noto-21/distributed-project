@@ -275,7 +275,7 @@ exports.cancelHold = async (req, res, next) => {
     if (env.returnToOrigin) {
       originPayload = await sendToOrigin(book, isbn10, thanks);
     }
-    res.status(200).json({ ...originPayload, late });
+    res.status(200).json(originPayload);
   } catch (err) {
     next(err);
   }
