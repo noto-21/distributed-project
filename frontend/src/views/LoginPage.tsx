@@ -1,16 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import toast from "react-hot-toast";
-import { BRANCH_OPTIONS, login, startGoogleSignIn } from "../api/auth";
+import { branches } from "../api/catalog";
 
 const panel = "rounded-xl border border-[#b5bfd2] bg-white p-4";
 const action = "w-full rounded-md bg-[#797171] px-4 py-2 text-white hover:bg-[#655d5d]";
 const field = "w-full rounded-md border border-[#9ca8bd] bg-white px-3 py-2";
 
-
-
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
+  const [branch, setBranch] = useState<string>(branches[0]);
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,14 +25,22 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await toast.promise(login(email, password), {
-        loading: "Logging in…",
-        success: (session: { user?: { name?: string } }) => `Welcome back${session.user?.name ? `, ${session.user.name}` : ""}!`,
-        error: (err: unknown) => (err instanceof Error ? err.message : "Something went wrong."),
+      const response = await fetch(`/${branch.toLowerCase()}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identifier: identifier.trim(), password }),
       });
-      navigate(from, { replace: true });
-    } catch {
-      // The error toast already says what happened.
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error ?? "Log in failed.");
+      }
+
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("refreshToken", data.refreshToken);
+      window.location.href = "/";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setLoading(false);
     }
@@ -44,7 +49,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-[#dff5f5] p-3 font-serif text-[#171717] sm:p-5">
       <div className="mx-auto max-w-4xl overflow-hidden rounded-2xl bg-[#dce5f6] shadow-md">
-        
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
           <Link to="/" className="text-2xl font-bold">
             <span className="text-[#4f82f6]">Durham</span>Library
@@ -63,14 +67,28 @@ export default function LoginPage() {
 
             <form className="space-y-4" onSubmit={handleSubmit}>
               <label className="block font-bold">
-                Email
-                <input
-                  type="email"
-                  required
-                  placeholder="Enter Your Email"
+                Library Branch
+                <select
                   className={`${field} mt-1 font-normal`}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  value={branch}
+                  onChange={(event) => setBranch(event.target.value)}
+                >
+                  {branches.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block font-bold">
+                Email or Username
+                <input
+                  type="text"
+                  required
+                  autoComplete="username"
+                  placeholder="Enter Your Email or Username"
+                  className={`${field} mt-1 font-normal`}
+                  value={identifier}
+                  onChange={(event) => setIdentifier(event.target.value)}
                 />
               </label>
 
@@ -79,6 +97,7 @@ export default function LoginPage() {
                 <input
                   type="password"
                   required
+                  autoComplete="current-password"
                   placeholder="Enter Your Password"
                   className={`${field} mt-1 font-normal`}
                   value={password}
@@ -86,44 +105,21 @@ export default function LoginPage() {
                 />
               </label>
 
+              {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
+
               <button type="submit" className={action} disabled={loading}>
                 {loading ? "Logging in..." : "Log In"}
               </button>
             </form>
 
-            <Link
-              to="/search"
+            <a
+              href="/my-books"
               className="mt-4 block w-full rounded-md border border-[#797171] bg-white px-4 py-2 text-center text-[#797171] hover:bg-[#f0eded]"
-            >
-              Continue as Guest
-            </Link>
+            >Continue as Guest</a>
 
-            <div className="mt-4 space-y-2">
-              <label className="block font-bold">
-                Home Branch (for Google)
-                <select
-                  className={`${field} mt-1 font-normal`}
-                  value={googleBranch}
-                  onChange={(event) => setGoogleBranch(event.target.value)}
-                >
-                  <option value="" disabled>Choose a branch</option>
-                  {BRANCH_OPTIONS.map((branch) => (
-                    <option key={branch} value={branch}>{branch[0].toUpperCase() + branch.slice(1)}</option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="font-bold">Log In With</span>
-                <button
-                  type="button"
-                  aria-label="Log in with Google"
-                  className="text-2xl font-bold disabled:opacity-40"
-                  disabled={!googleBranch}
-                  onClick={() => startGoogleSignIn(googleBranch)}
-                >
-                  G
-                </button>
-              </div>
+            <div className="mt-4 flex items-center gap-2">
+              <span className="font-bold">Log In With</span>
+                <a href="/api/auth/google?homeBranch=ajax" aria-label="Log in with Google" className="text-2xl font-bold">G</a>
             </div>
           </section>
         </main>

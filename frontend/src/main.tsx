@@ -25,20 +25,16 @@ function PublicOnlyRoutes() {
 }
 
 function App() {
-  return (
-    <Routes>
-      <Route element={<ProtectedRoutes />}>
-        <Route path="/" element={<MyBooksPage />} />
-      </Route>
-      <Route element={<PublicOnlyRoutes />}>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-      </Route>
-      <Route path="/search" element={<SearchPage />} />
-      <Route path="/auth/callback" element={<AuthCallbackPage />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+
+  if (path === "/") return <LoginPage />;
+  if (path === "/search") return <SearchPage />;
+  if (path === "/login") return <LoginPage />;
+  if (path === "/signup") return <SignupPage />;
+  if (path === "/auth/callback") return <AuthCallbackPage />;
+  if (path === "/my-books") return <MyBooksPage />;
+
+  return <LoginPage />;
 }
 
 createRoot(document.getElementById("root")!).render(

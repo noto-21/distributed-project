@@ -262,15 +262,12 @@ export default function SearchPage() {
           <Link to="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</Link>
           <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-5">
             <Link to="/">Home</Link>
-            <a href="/#my-books">My Books</a>
+            <a href="/my-books">Home</a>
             <Link to="/search" className="underline" aria-current="page">Search</Link>
             {signedIn ? (
               <button type="button" className={action} onClick={logOut}>Log Out</button>
             ) : (
-              <>
-                <Link to="/login" className="underline">Log In</Link>
-                <Link to="/signup" className="underline">Sign Up</Link>
-              </>
+              <a href="/login" className={action}>Log In</a>
             )}
           </nav>
         </header>
