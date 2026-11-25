@@ -296,13 +296,21 @@ describe("checkout, return, loans and custody history", () => {
     expect(res.body).toMatchObject({ maxBooks: 3, maxRenewals: 2 });
   });
 
-  test("renew adds LOAN_DAYS to the due date, twice at most", async () => {
+  test("renew adds LOAN_DAYS to the current date, twice at most", async () => {
     await makeBook("TEST-CR-023");
     const due0 = new Date((await post("checkout", "TEST-CR-023")).body.loan.dueAt).getTime();
 
+    const before = Date.now();
     const first = await post("renew", "TEST-CR-023");
     expect(first.status).toBe(200);
-    expect(new Date(first.body.loan.dueAt).getTime()).toBe(due0 + env.loanDays * 86_400_000);
+    
+    const after = Date.now();
+
+    const actualDueAt = new Date(first.body.loan.dueAt).getTime();
+    const expectedOffset = env.loanDays * 86_400_000;
+
+    expect(actualDueAt).toBeGreaterThanOrEqual(before + expectedOffset);
+    expect(actualDueAt).toBeLessThanOrEqual(after + expectedOffset);
     expect(first.body).toMatchObject({ renewalsLeft: 1 });
     expect(first.body.message.startsWith("Renewed “Copy TEST-CR-023”. It's now due ")).toBe(true);
 

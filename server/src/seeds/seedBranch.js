@@ -8,6 +8,11 @@ const csv = require("csv-parser");
 const env = require("../config/env.js"); // Gives access to the database URI and the branch names (oshawa, ajax, whitby)
 const Library = require("../models/Library.js"); // Library model (schema)
 
+const parseAuthors = (raw) => {
+  if (!raw || !raw.trim()) return [];
+  return raw.split(/[;|]/).map((a) => a.trim()).filter(Boolean);
+};
+
 const importCsv = async (filePath) => {
   const absolutePath = path.resolve(filePath); // Make sure to add the path to the csv (./data/ajax_items.csv)
 
@@ -31,7 +36,7 @@ const importCsv = async (filePath) => {
           isbn10: row.isbn10,
           title: row.title,
           subtitle: row.subtitle,
-          author: row.author,
+          author: parseAuthors(row.authors),
           categories: row.categories,
           thumbnail: row.thumbnail,
           description: row.description,

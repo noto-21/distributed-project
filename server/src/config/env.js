@@ -59,6 +59,7 @@ function loadEnv(env = process.env) {
     authRateLimit: Number(env.AUTH_RATE_LIMIT) || 10, // attempts per IP per 15 min on login/register/refresh
     holdDays: Number(env.HOLD_DAYS) || 3, // a requested copy waits this long for its requester
     loanDays: Number(env.LOAN_DAYS) || 14,
+    returnToOrigin: true,
     // Optional: Google login returns 501 unless both are set.
     google:
       env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET

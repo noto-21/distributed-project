@@ -13,7 +13,6 @@ const userSchema = new mongoose.Schema(
     createdLamport: { type: Number, default: 0 },
     // Set when another branch turned out to hold the same email first; this account is then ignored.
     duplicateOf: { type: String, enum: [...validBranches, null], default: null },
-    book: { type: String, trim: true, default: "" },
   },
   {
     timestamps: true,
