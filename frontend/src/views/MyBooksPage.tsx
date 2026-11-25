@@ -63,6 +63,12 @@ async function getJson(url: string) {
   return data;
 }
 
+export function searchUrl(isbn10: string) {
+  const params = new URLSearchParams();
+  if (isbn10) params.set("book", isbn10);
+  return params.size ? `/search?${params}` : "/search";
+}
+
 // One staff recommendation.
 const staffPicks = [
   {
@@ -427,13 +433,13 @@ export default function MyBooksPage() {
                       
 
                       {/* Enable this when the book detail screen is available. */}
-                      <button
-                        type="button"
-                        disabled
-                        className="block cursor-not-allowed text-sm text-gray-400"
+                      <Link
+                        to={`${searchUrl(book.isbn10)}`}
+                        aria-label={`View details for ${book.title ?? book.isbn10}`}
+                        className="mt-2 block border-t border-slate-200 pt-2 text-sm underline"
                       >
-                        View Details
-                      </button>
+                        View details
+                      </Link>
 
                       {/* Choose a label and colour based on the book's current state. */}
                       <p

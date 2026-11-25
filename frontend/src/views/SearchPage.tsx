@@ -5,6 +5,7 @@ import { clearSession } from "../api/auth";
 import { useBranchCatalog } from "../recommendations/useBranchCatalog";
 import type { CatalogBook } from "../recommendations/recommendations";
 import BookDetails, { BookCover, branches, type Branch } from "./BookDetails";
+import { authFetch } from "../api/client";
 
 type Status = "Available" | "Checked out" | "On hold" | "In transit" | "No copy" | "Branch unreachable";
 // One title across the three branches: its first copy's details plus each branch's status.
@@ -16,6 +17,13 @@ const statusLabel: Record<string, Status> = {
   ON_HOLD: "On hold",
   IN_TRANSIT: "In transit",
 };
+
+async function getJson(url: string) {
+  const res = await authFetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data;
+}
 
 // Copies come from every branch database; group them by ISBN-10.
 function toEditions(catalog: CatalogBook[], offline: string[]): Edition[] {
@@ -43,7 +51,7 @@ const isIsbn10 = (value: string) => /^\d{9}[\dX]$/.test(normalizeIsbn10(value));
 // shortcut: filters the loaded branch catalogs in the browser; add a server search endpoint if catalogs grow to thousands of books.
 function searchEditions(editions: Edition[], query: string) {
   const text = query.trim().toLowerCase();
-  if (!text) return [];
+  if (text == '') return editions.slice(0, 5);
   if (isIsbn10(query)) return editions.filter(book => book.isbn10.toUpperCase() === normalizeIsbn10(query));
 
   const words = text.split(/\s+/);
@@ -135,6 +143,7 @@ function EditionCard({ book, query, onNavigate }: {
 }
 
 export default function SearchPage() {
+  const [username, setUsername] = useState("");
   const [{ query, bookIsbn }, setLocation] = useState(readSearchLocation);
   const { catalog, loading: catalogLoading, message: catalogMessage, offline } = useBranchCatalog();
   const editions = useMemo(() => toEditions(catalog, offline), [catalog, offline]);
@@ -145,6 +154,26 @@ export default function SearchPage() {
   const [availableOnly, setAvailableOnly] = useState(false);
   const [sort, setSort] = useState("relevance");
   const [signedIn, setSignedIn] = useState(hasSession);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([getJson("/api/auth/me")])
+      .then(([me]) => {
+        if (cancelled) return;
+        setUsername(me.user.name || me.user.email);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+      })
+
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    setShowAll(false);
+  }, [query, selectedLibraries, availableOnly, sort]);
 
   useEffect(() => {
     function restoreSearch() {
@@ -209,26 +238,54 @@ export default function SearchPage() {
     : undefined;
   const selectedBranches = selectedLibraries.length ? selectedLibraries : branches;
 
-  const results = query
-    ? searchEditions(editions, query).filter(book =>
-        selectedBranches.some(location =>
-          availableOnly
-            ? book.holdings[location] === "Available"
-            : book.holdings[location] !== "No copy",
-        ),
-      )
-    : [];
-  if (sort === "title") results.sort((a, b) => a.title.localeCompare(b.title));
+  const baseEditions = query ? searchEditions(editions, query) : editions;
 
+  const filteredResults = baseEditions.filter(book =>
+    selectedBranches.some(location =>
+      availableOnly
+        ? book.holdings[location] === "Available"
+        : book.holdings[location] !== "No copy",
+    ),
+  );
+
+  if (sort === "title") {
+    filteredResults.sort((a, b) => a.title.localeCompare(b.title));
+  }
+  // Show filtered results; if none exist (or no query is active), fall back to the first 5 editions
+  const results = useMemo(() => {
+  if (!editions.length) return [];
+
+  const activeBranches = selectedLibraries.length > 0 ? selectedLibraries : branches;
+  const base = query ? searchEditions(editions, query) : editions;
+
+  const filtered = base.filter(book =>
+    activeBranches.some(location =>
+      availableOnly
+        ? book.holdings[location] === "Available"
+        : book.holdings[location] !== "No copy"
+    )
+  );
+
+  if (sort === "title") {
+    filtered.sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  if (filtered.length > 0) {
+    return query ? filtered : filtered.slice(0, 5);
+  }
+
+  return editions.slice(0, 5);
+}, [editions, selectedLibraries, query, availableOnly, sort]);
+console.log(results);
   return (
     <div className="min-h-screen bg-[#dff5f5] p-3 font-serif text-[#171717] sm:p-5">
       <div className="mx-auto max-w-7xl overflow-hidden rounded-2xl bg-[#dce5f6] shadow-md">
         <header className="flex flex-wrap items-center justify-between gap-3 bg-white px-6 py-4">
           <Link to="/" className="text-2xl font-bold"><span className="text-[#4f82f6]">Durham</span>Library</Link>
           <nav aria-label="Main navigation" className="flex flex-wrap items-center gap-5">
-            <Link to="/">Home</Link>
             <a href="/#my-books">My Books</a>
             <Link to="/search" className="underline" aria-current="page">Search</Link>
+            <span>{username}</span>
             {signedIn ? (
               <button type="button" className={action} onClick={logOut}>Log Out</button>
             ) : (
@@ -242,7 +299,7 @@ export default function SearchPage() {
         <main className="p-5 sm:p-7">
           {!bookIsbn && (
               <div className="mb-5 flex flex-wrap justify-between gap-3">
-                <div><h1 className="text-3xl font-bold">Welcome, Username</h1><p>Find books across Ajax, Oshawa and Whitby.</p></div>
+                <div><h1 className="text-3xl font-bold">Welcome, {username}</h1><p>Find books across Ajax, Oshawa and Whitby.</p></div>
                 <div className={panel}><p className="text-xs uppercase">Your home branch</p><p className="font-bold">Oshawa</p></div>
               </div>
           )}
@@ -316,77 +373,84 @@ export default function SearchPage() {
               )}
             </>
           ) : (
-            <>
-              {query ? (
-                <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_15rem]">
-                  <section aria-labelledby="results-heading">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h2 id="results-heading" className="text-xl font-bold">Search Results</h2>
-                      <select className={field} aria-label="Sort results" value={sort} onChange={event => setSort(event.target.value)}>
-                        <option value="relevance">Sort by relevance</option><option value="title">Sort by title</option>
-                      </select>
+              <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_15rem]">
+                <section aria-labelledby="results-heading">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 id="results-heading" className="text-xl font-bold">
+                      {query ? "Search Results" : "Featured Books"}
+                    </h2>
+                    <select className={field} aria-label="Sort results" value={sort} onChange={event => setSort(event.target.value)}>
+                      <option value="relevance">Sort by relevance</option>
+                      <option value="title">Sort by title</option>
+                    </select>
+                  </div>
+                  <p className="my-2 text-sm" role="status">
+                    {catalogLoading
+                      ? "Loading the catalog from all libraries…"
+                      : query
+                        ? `${results.length} ${results.length === 1 ? "match" : "matches"} for “${query}” · All libraries`
+                        : `Showing ${results.length} featured books · All libraries`}
+                  </p>
+                  {catalogMessage && <p className="mb-2 rounded-md bg-amber-100 p-2 text-sm text-amber-900">{catalogMessage}</p>}
+                  <div className="space-y-3">
+                    {results.length ? (
+                      results.map(book => (
+                        <EditionCard key={book.isbn10} book={book} query={query} onNavigate={navigateSearch} />
+                      ))
+                    ) : (
+                      <p className={panel}>No matching results. Try another title, author, category, or ISBN-10, or clear the filters.</p>
+                    )}
+                  </div>
+                </section>
+
+                <aside className="space-y-3">
+                  <section className={`${panel} space-y-3`}>
+                    <div className="flex justify-between">
+                      <h2 className="font-bold">Refine search</h2>
+                      <button
+                        type="button"
+                        className="underline"
+                        onClick={() => {
+                          setSelectedLibraries([]);
+                          setAvailableOnly(false);
+                        }}
+                      >
+                        Reset
+                      </button>
                     </div>
-                    <p className="my-2 text-sm" role="status">
-                      {catalogLoading
-                        ? "Loading the catalog from all libraries…"
-                        : `${results.length} ${results.length === 1 ? "match" : "matches"} for “${query}” · All libraries`}
-                    </p>
-                    {catalogMessage && <p className="mb-2 rounded-md bg-amber-100 p-2 text-sm text-amber-900">{catalogMessage}</p>}
-                    <div className="space-y-3">
-                      {results.length ? results.map(book => <EditionCard key={book.isbn10} book={book} query={query} onNavigate={navigateSearch} />) :
-                        <p className={panel}>No matching results. Try another title, author, category, or ISBN-10, or clear the filters.</p>}
-                    </div>
+
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={availableOnly}
+                        onChange={event => setAvailableOnly(event.currentTarget.checked)}
+                      />
+                      Available now
+                    </label>
+
+                    <fieldset className="space-y-1 border-t border-slate-200 pt-2">
+                      <legend className="pr-2 font-semibold">Library</legend>
+                      {branches.map(name => (
+                        <label key={name} className="flex cursor-pointer items-center gap-2 py-1">
+                          <input
+                            type="checkbox"
+                            checked={selectedLibraries.includes(name)}
+                            onChange={event => {
+                              const checked = event.currentTarget.checked;
+                              setSelectedLibraries(current =>
+                                checked ? [...current, name] : current.filter(item => item !== name),
+                              );
+                            }}
+                          />
+                          {name}
+                        </label>
+                      ))}
+                    </fieldset>
+
                   </section>
-                  <aside className="space-y-3">
-                    <section className={`${panel} space-y-3`}>
-                      <div className="flex justify-between">
-                        <h2 className="font-bold">Refine search</h2>
-                        <button
-                          type="button"
-                          className="underline"
-                          onClick={() => {
-                            setSelectedLibraries([]);
-                            setAvailableOnly(false);
-                          }}
-                        >
-                          Reset
-                        </button>
-                      </div>
-
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={availableOnly}
-                          onChange={event => setAvailableOnly(event.currentTarget.checked)}
-                        />
-                        Available now
-                      </label>
-
-                      <fieldset className="space-y-1 border-t border-slate-200 pt-2">
-                        <legend className="pr-2 font-semibold">Library</legend>
-                        {branches.map(name => (
-                          <label key={name} className="flex cursor-pointer items-center gap-2 py-1">
-                            <input
-                              type="checkbox"
-                              checked={selectedLibraries.includes(name)}
-                              onChange={event => {
-                                const checked = event.currentTarget.checked;
-                                setSelectedLibraries(current =>
-                                  checked ? [...current, name] : current.filter(item => item !== name),
-                                );
-                              }}
-                            />
-                            {name}
-                          </label>
-                        ))}
-                      </fieldset>
-
-                    </section>
-                    <section className={panel}><h2 className="font-bold">My Borrowing</h2><a href="/#my-books" className="underline">View My Books</a></section>
-                  </aside>
-                </div>
-              ) : null}
-            </>
+                  <section className={panel}><h2 className="font-bold">My Borrowing</h2><a href="/#my-books" className="underline">View My Books</a></section>
+                </aside>
+              </div>
           )}
         </main>
         <footer className="bg-white px-6 py-3 text-sm">DurhamLibrary · Ajax · Oshawa · Whitby</footer>
