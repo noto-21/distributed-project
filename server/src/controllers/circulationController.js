@@ -213,7 +213,11 @@ exports.returnBook = async (req, res, next) => {
     const late = Boolean(loan?.dueAt && loan.dueAt < new Date());
 
     const thanks = `Thanks for returning “${book.title}”${late ? " (it was overdue)" : ""}.`;
-    res.status(200).json({ ...(await sendToOrigin(book, isbn10, thanks)), late });
+    let originPayload = { message: thanks };
+    if (env.returnToOrigin) {
+      originPayload = await sendToOrigin(book, isbn10, thanks);
+    }
+    res.status(200).json({ ...originPayload, late });
   } catch (err) {
     next(err);
   }
@@ -230,7 +234,7 @@ exports.renewLoan = async (req, res, next) => {
       throw AppError.conflict(`This book has already been renewed ${MAX_RENEWALS} times. Please return it.`, "RENEW_LIMIT");
     }
 
-    const dueAt = new Date(Math.max(loan.dueAt.getTime(), Date.now()) + env.loanDays * 86_400_000);
+    const dueAt = new Date(Date.now() + env.loanDays * 86_400_000);
     // Matching on the old dueAt means two simultaneous renewals can't both count.
     const renewed = await Loan.findOneAndUpdate(
       { _id: loan._id, status: "ACTIVE", dueAt: loan.dueAt },
@@ -266,7 +270,12 @@ exports.cancelHold = async (req, res, next) => {
         ? AppError.conflict(`'${isbn10}' is not on hold for you here`, "NOT_HELD_FOR_YOU")
         : AppError.notFound(`Book '${isbn10}' is not held at branch '${env.branchId}'`, "BOOK_NOT_FOUND");
     }
-    res.status(200).json(await sendToOrigin(book, isbn10, `Your hold on “${book.title}” is cancelled.`));
+    const thanks = `Your hold on “${book.title}” is cancelled.`;
+    let originPayload = { message: thanks };
+    if (env.returnToOrigin) {
+      originPayload = await sendToOrigin(book, isbn10, thanks);
+    }
+    res.status(200).json({ ...originPayload, late });
   } catch (err) {
     next(err);
   }
